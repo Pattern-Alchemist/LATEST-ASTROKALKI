@@ -2,11 +2,25 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Cal, { getCalApi } from "@calcom/embed-react";
+import type { EmbedEvent } from "@calcom/embed-react";
 import { openWhatsApp } from "@/lib/whatsapp";
 import { useI18n } from "@/lib/i18n-context";
 import { AvailabilityIndicator } from "@/components/astrokalki/availability-indicator";
 import StripePaymentWrapper from "@/components/astrokalki/stripe-payment-element";
 import VideoCallRoom from "@/components/astrokalki/video-call-room";
+
+// ─── Cal.com config ────────────────────────────────────────────
+const CAL_LINK = process.env.NEXT_PUBLIC_CAL_LINK || "astrokalki/consultation";
+const CAL_ORIGIN = process.env.NEXT_PUBLIC_CAL_ORIGIN || "https://cal.com";
+
+// Map each duration to a separate cal.com event type slug.
+// Create 3 event types in Cal.com (30/60/90 min) and set the slugs below.
+const DURATION_CAL_MAP: Record<string, string> = {
+  "30": "astrokalki/30min-session",
+  "60": CAL_LINK,           // default / recommended
+  "90": "astrokalki/90min-session",
+};
 
 const durationKeys = [
   { value: "30", labelKey: "booking.duration30", sublabelKey: "booking.duration30sub", price: "₹1,499" },
@@ -19,14 +33,14 @@ const contextKeys = [
   "booking.ctx5", "booking.ctx6", "booking.ctx7", "booking.ctx8",
 ];
 
-// ─── Slot types ──────────────────────────────────────────────────
+// ─── Cal booking result ────────────────────────────────────────
 
-interface Slot {
-  id: string;
-  start: string; // ISO
-  end: string;   // ISO
-  duration: number;
-  status: string;
+interface CalBookingResult {
+  startTime: string;
+  endTime: string;
+  title?: string;
+  uid?: string;
+  videoCallUrl?: string;
 }
 
 const STEPS = [
@@ -85,18 +99,11 @@ function formatDateShort(iso: string): string {
   });
 }
 
-function dateGroupKey(iso: string): string {
-  const d = new Date(iso);
-  const ist = new Date(d.getTime() + 330 * 60_000);
-  return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-${String(ist.getUTCDate()).padStart(2, "0")}`;
-}
-
 // ─── Component ───────────────────────────────────────────────────
 
 export default function Booking() {
   const [step, setStep] = useState(0);
   const [selectedDuration, setSelectedDuration] = useState<string | null>(null);
-  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [skippedSlot, setSkippedSlot] = useState(false);
   const [selectedContexts, setSelectedContexts] = useState<string[]>([]);
   const [formData, setFormData] = useState({
@@ -105,17 +112,14 @@ export default function Booking() {
   });
   const { t } = useI18n();
 
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [slotsLoading, setSlotsLoading] = useState(false);
-  const [slotsError, setSlotsError] = useState<string | null>(null);
-  const [slotsFetchedFor, setSlotsFetchedFor] = useState<string | null>(null);
+  // Cal.com booking result (replaces old slot system)
+  const [calBooking, setCalBooking] = useState<CalBookingResult | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
 
   // ─── Stripe payment state ──────────────────────────────────────
-  // Only show Stripe option if publishable key is configured
   const stripeAvailable = typeof process !== 'undefined' && !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   const [paymentMethod, setPaymentMethod] = useState<"stripe" | "whatsapp" | null>(stripeAvailable ? null : "whatsapp");
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -138,12 +142,7 @@ export default function Booking() {
     setFormData((prev) => (prev.referredBy === code ? prev : { ...prev, referredBy: code }));
   }, []);
 
-  // Stripe redirect return detection — handles UPI/netbanking/wallet payments
-  // that redirect the user to an external page and return via the return_url.
-  // On return, Stripe appends ?payment_intent=pi_xxx&redirect_status=succeeded
-  // to the URL. If we detect a successful return, confirm the booking.
-  // The full booking payload is retrieved from sessionStorage (stored before
-  // initiating the redirect).
+  // Stripe redirect return detection
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -151,7 +150,6 @@ export default function Booking() {
     const status = params.get("redirect_status");
     if (!pi || status !== "succeeded") return;
 
-    // Retrieve the stored booking payload
     const storedPayload = sessionStorage.getItem("stripe_booking_payload");
     let bookingPayload: Record<string, unknown> = { paymentIntentId: pi };
     if (storedPayload) {
@@ -162,7 +160,6 @@ export default function Booking() {
       } catch { /* use default */ }
     }
 
-    // Payment was completed via redirect — confirm the booking
     const confirmReturnBooking = async () => {
       setSubmitting(true);
       try {
@@ -180,10 +177,8 @@ export default function Booking() {
         }
         setBookingSuccess(true);
         setPaymentConfirmed(true);
-        // Clean URL params
         window.history.replaceState({}, "", window.location.pathname + window.location.hash);
       } catch {
-        // Payment already taken — log and show success
         setBookingSuccess(true);
         setPaymentConfirmed(true);
         window.history.replaceState({}, "", window.location.pathname + window.location.hash);
@@ -195,41 +190,65 @@ export default function Booking() {
     confirmReturnBooking();
   }, []);
 
+  // ─── Cal.com booking success listener ─────────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let mounted = true;
+
+    const handleBookingSuccess = async (e: EmbedEvent<"bookingSuccessfulV2">) => {
+      if (!mounted) return;
+      const { data } = e.detail;
+      if (data?.startTime && data?.endTime) {
+        setCalBooking({
+          startTime: data.startTime,
+          endTime: data.endTime,
+          title: data.title || undefined,
+          uid: data.uid || undefined,
+          videoCallUrl: data.videoCallUrl || undefined,
+        });
+        // Log to analytics
+        fetch("/api/analytics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "cal_booking_success",
+            data: { duration: selectedDuration, calUid: data.uid },
+            page: "/",
+          }),
+        }).catch(() => {});
+      }
+    };
+
+    // Use getCalApi to subscribe to booking events
+    getCalApi().then((cal) => {
+      if (!mounted) return;
+      cal("on", {
+        action: "bookingSuccessfulV2",
+        callback: handleBookingSuccess as never,
+      });
+    }).catch(() => {
+      // Cal API not yet ready — will pick up events via iframe postMessage
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [selectedDuration]);
+
   const toggleContext = (ctx: string) => {
     setSelectedContexts((prev) =>
       prev.includes(ctx) ? prev.filter((c) => c !== ctx) : [...prev, ctx]
     );
   };
 
-  const fetchSlots = useCallback(async (duration: string) => {
-    setSlotsLoading(true);
-    setSlotsError(null);
-    try {
-      const res = await fetch(`/api/slots?duration=${duration}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("fetch failed");
-      const data = await res.json();
-      setSlots(data.slots || []);
-      setSlotsFetchedFor(duration);
-    } catch {
-      setSlotsError(t("booking.slotRetry"));
-      setSlots([]);
-    } finally {
-      setSlotsLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    if (step === 2 && selectedDuration && slotsFetchedFor !== selectedDuration) {
-      fetchSlots(selectedDuration);
-    }
-  }, [step, selectedDuration, slotsFetchedFor, fetchSlots]);
-
   const handleNext = () => { if (step < 5) setStep(step + 1); };
   const handleBack = () => { if (step > 0) setStep(step - 1); };
 
   const canProceed = () => {
     if (step === 1) return selectedDuration !== null;
-    if (step === 2) return selectedSlot !== null || skippedSlot;
+    // Step 2: cal.com embed — user can proceed once they've booked via cal.com or skip
+    if (step === 2) return calBooking !== null || skippedSlot;
     if (step === 3) return selectedContexts.length > 0;
     if (step === 4) return formData.name && formData.email;
     return true;
@@ -242,13 +261,8 @@ export default function Booking() {
     return "";
   };
 
-  const handleSlotSelect = (slot: Slot) => {
-    setSelectedSlot(slot);
-    setSkippedSlot(false);
-  };
-
   const handleSkipSlot = () => {
-    setSelectedSlot(null);
+    setCalBooking(null);
     setSkippedSlot(true);
   };
 
@@ -257,8 +271,6 @@ export default function Booking() {
     setBookingError(null);
     setPaymentProcessing(true);
 
-    // Store booking payload in sessionStorage so redirect-based payments
-    // (UPI/netbanking) can retrieve it when returning from the external page
     const bookingPayload = {
       name: formData.name,
       email: formData.email,
@@ -268,7 +280,7 @@ export default function Booking() {
       contexts: selectedContexts,
       message: formData.message || undefined,
       referredBy: formData.referredBy || undefined,
-      selectedSlot: selectedSlot || undefined,
+      calBooking: calBooking || undefined,
     };
     try {
       sessionStorage.setItem("stripe_booking_payload", JSON.stringify(bookingPayload));
@@ -304,7 +316,6 @@ export default function Booking() {
     setSubmitting(true);
 
     try {
-      // Confirm the booking server-side
       const res = await fetch("/api/stripe/confirm-booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -318,7 +329,7 @@ export default function Booking() {
           contexts: selectedContexts,
           message: formData.message || undefined,
           referredBy: formData.referredBy || undefined,
-          selectedSlot: selectedSlot || undefined,
+          calBooking: calBooking || undefined,
         }),
       });
 
@@ -330,13 +341,10 @@ export default function Booking() {
 
       if (!res.ok) {
         console.warn("[Stripe] Booking confirmation API failed — payment already taken");
-        // Payment already succeeded — booking logged in Stripe dashboard.
-        // Manual reconciliation via Stripe payments dashboard.
       }
 
       setBookingSuccess(true);
     } catch {
-      // Payment already succeeded — booking logged in Stripe dashboard
       setBookingSuccess(true);
     } finally {
       setSubmitting(false);
@@ -367,35 +375,14 @@ export default function Booking() {
       website: "",
     };
 
-    if (selectedSlot) {
-      try {
-        const res = await fetch(`/api/slots/${selectedSlot.id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setBookingError(data.error || t("booking.bookingError"));
-          setSubmitting(false);
-          return;
-        }
-        // Slot booking creates the booking already — no need to call /api/bookings
-      } catch {
-        setBookingError(t("booking.bookingError"));
-        setSubmitting(false);
-        return;
-      }
-    } else {
-      // Only call /api/bookings when no slot is selected (to avoid double-creation)
-      try {
-        await fetch("/api/bookings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } catch { /* non-fatal */ }
-    }
+    // Create booking record via API (without slot since cal.com handles scheduling)
+    try {
+      await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch { /* non-fatal */ }
 
     fetch("/api/analytics", {
       method: "POST",
@@ -425,19 +412,10 @@ export default function Booking() {
     setSubmitting(false);
   };
 
-  // ─── Group slots by date ───────────────────────────────────────
-  const groupedSlots = (() => {
-    const map = new Map<string, Slot[]>();
-    for (const s of slots) {
-      const key = dateGroupKey(s.start);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(s);
-    }
-    for (const arr of map.values()) {
-      arr.sort((a, b) => a.start.localeCompare(b.start));
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  })();
+  // Build the cal.com link based on selected duration
+  const getCalLink = () => {
+    return DURATION_CAL_MAP[selectedDuration || "60"] || CAL_LINK;
+  };
 
   return (
     <section id="booking" className="relative py-32 sm:py-48 px-6 sm:px-10 lg:px-16">
@@ -538,20 +516,26 @@ export default function Booking() {
                       {durationKeys.map((d) => (
                         <button
                           key={d.value}
-                          onClick={() => { setSelectedDuration(d.value); setSelectedSlot(null); setSkippedSlot(false); setPaymentMethod(null); setClientSecret(null); setMeetingLink(null); }}
-                          className={`w-full text-left py-6 border-b border-white/[0.06] transition-colors duration-400 cursor-pointer grid grid-cols-12 gap-4 items-baseline px-2 ${
+                          onClick={() => {
+                            setSelectedDuration(d.value);
+                            setCalBooking(null);
+                            setSkippedSlot(false);
+                          }}
+                          className={`w-full text-left grid grid-cols-12 gap-4 sm:gap-6 py-6 border-b border-white/[0.06] transition-colors duration-400 cursor-pointer ${
                             selectedDuration === d.value ? "bg-white/[0.02]" : "hover:bg-white/[0.015]"
                           }`}
                         >
                           <div className="col-span-12 sm:col-span-7">
-                            <p className={`text-base sm:text-lg font-serif font-light ${selectedDuration === d.value ? "text-[#c9a96e]" : "text-[#f0eee9]"}`}>
-                              {t(d.labelKey)}
+                            <div className="flex items-center gap-3">
+                              <span className={`text-base sm:text-lg font-serif font-light ${selectedDuration === d.value ? "text-[#c9a96e]" : "text-[#f0eee9]"}`}>
+                                {t(d.labelKey)}
+                              </span>
                               {d.recommended && (
                                 <span className="ml-3 text-[9px] tracking-[0.3em] uppercase text-[#c9a96e]/70 border border-[#c9a96e]/30 px-2 py-0.5 font-light">
                                   {t("booking.recommended")}
                                 </span>
                               )}
-                            </p>
+                            </div>
                             <p className="text-[12px] text-[#7a7a7a] mt-2 font-light">{t(d.sublabelKey)}</p>
                           </div>
                           <div className="col-span-12 sm:col-span-5 sm:text-right">
@@ -563,77 +547,49 @@ export default function Booking() {
                   </div>
                 )}
 
-                {/* Step 2 — Slot picker */}
+                {/* Step 2 — Cal.com Calendar Embed */}
                 {step === 2 && (
                   <div>
                     <p className="text-[#f0eee9] text-xl sm:text-2xl font-serif font-light mb-3 leading-tight">{t("booking.slotTitle")}</p>
-                    <p className="text-[#9a9a9a] text-sm leading-[1.8] mb-10 font-light">{t("booking.slotSubtitle")}</p>
-                    {slotsLoading && (
-                      <div className="border-t border-white/[0.06] py-10 text-center">
-                        <p className="text-[#7a7a7a] text-sm font-light animate-pulse">{t("booking.slotLoading")}</p>
-                      </div>
-                    )}
-                    {!slotsLoading && slotsError && (
-                      <div className="border-t border-white/[0.06] py-10 text-center">
-                        <p className="text-[#7a7a7a] text-sm font-light mb-4">{slotsError}</p>
-                        <button onClick={() => selectedDuration && fetchSlots(selectedDuration)} className="inline-flex items-center gap-2 text-[11px] tracking-[0.3em] uppercase text-[#c9a96e] border-b border-[#c9a96e]/40 pb-2 hover:border-[#c9a96e] transition-colors cursor-pointer">
-                          {t("booking.slotRetryBtn")} →
-                        </button>
-                      </div>
-                    )}
-                    {!slotsLoading && !slotsError && slots.length === 0 && (
-                      <div className="border-t border-white/[0.06] py-10">
-                        <p className="text-[#9a9a9a] text-sm font-light mb-2 text-center">{t("booking.slotEmpty")}</p>
-                        <p className="text-[#7a7a7a] text-xs font-light mb-6 text-center max-w-md mx-auto">{t("booking.slotEmptyHint")}</p>
-                        <div className="text-center">
-                          <button onClick={handleSkipSlot} className="inline-flex items-center gap-2 text-[11px] tracking-[0.3em] uppercase text-[#c9a96e] border-b border-[#c9a96e]/40 pb-2 hover:border-[#c9a96e] transition-colors cursor-pointer">
-                            {t("booking.slotEmptyCta")} →
-                          </button>
+                    <p className="text-[#9a9a9a] text-sm leading-[1.8] mb-8 font-light">{t("booking.calSubtitle")}</p>
+
+                    {/* Cal.com inline embed */}
+                    <div className="border-t border-white/[0.06] pt-2">
+                      <Cal
+                        calLink={getCalLink()}
+                        calOrigin={CAL_ORIGIN}
+                        namespace="astrokalki-booking"
+                        style={{ width: "100%", minHeight: "500px", border: "none" }}
+                        config={{
+                          "ui.color-scheme": "dark",
+                          "ui.theme": "dark",
+                          "layout": "month_view",
+                          "hide_github_link": "true",
+                          ...(formData.name ? { "name": formData.name } : {}),
+                          ...(formData.email ? { "email": formData.email } : {}),
+                        }}
+                      />
+                    </div>
+
+                    {/* Booking confirmation from cal.com */}
+                    {calBooking && (
+                      <div className="mt-6 border-t border-[#c9a96e]/20 bg-[#c9a96e]/[0.04] px-4 py-3 flex items-start gap-3">
+                        <span aria-hidden="true" className="text-[#4ade80] text-xs mt-0.5">✓</span>
+                        <div className="flex-1">
+                          <p className="text-[10px] tracking-[0.3em] uppercase text-[#4ade80]/80 mb-1 font-light">Session scheduled</p>
+                          <p className="text-[12px] text-[#cfcabf] font-light leading-relaxed">
+                            {formatDateLong(calBooking.startTime)} · {formatSlotTime(calBooking.startTime)} — {formatSlotTime(calBooking.endTime)} (IST)
+                          </p>
                         </div>
                       </div>
                     )}
-                    {!slotsLoading && !slotsError && slots.length > 0 && (
-                      <div className="space-y-8 max-h-[28rem] overflow-y-auto pr-2 -mr-2 [scrollbar-width:thin] [scrollbar-color:#c9a96e40_transparent] [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#c9a96e]/30 [&::-webkit-scrollbar-thumb:hover]:bg-[#c9a96e]/60">
-                        {groupedSlots.map(([dateKey, daySlots]) => (
-                          <div key={dateKey}>
-                            <div className="flex items-center gap-3 mb-3">
-                              <p className="text-[10px] tracking-[0.3em] uppercase text-[#c9a96e]/80 font-light" style={{ fontFamily: "Cinzel, serif" }}>
-                                {formatDateLong(daySlots[0].start)}
-                              </p>
-                              <div className="flex-1 h-px bg-[#c9a96e]/15" />
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-px">
-                              {daySlots.map((slot) => {
-                                const isSelected = selectedSlot?.id === slot.id;
-                                return (
-                                  <button
-                                    key={slot.id}
-                                    onClick={() => handleSlotSelect(slot)}
-                                    className={`text-left px-3 py-3 transition-all duration-300 cursor-pointer border-b ${
-                                      isSelected ? "border-[#c9a96e] bg-[#c9a96e]/[0.06]" : "border-white/[0.04] hover:border-[#c9a96e]/40 hover:bg-white/[0.015]"
-                                    }`}
-                                  >
-                                    <p className={`font-mono text-sm ${isSelected ? "text-[#c9a96e]" : "text-[#f0eee9]"} font-light`}>{formatSlotTime(slot.start)}</p>
-                                    <p className="text-[10px] text-[#5a5a5a] mt-0.5 font-light">{slot.duration} min</p>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {!slotsLoading && !slotsError && slots.length > 0 && (
-                      <div className="mt-8 pt-6 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-4">
-                        {selectedSlot ? (
-                          <p className="text-[11px] tracking-[0.2em] uppercase text-[#c9a96e] font-light">
-                            {t("booking.slotSelected")}:{" "}
-                            <span className="font-mono normal-case tracking-normal">{formatDateShort(selectedSlot.start)} · {formatSlotTime(selectedSlot.start)}</span>
-                          </p>
-                        ) : (
-                          <span className="text-[11px] text-[#5a5a5a] font-light">{t("booking.confirmSlotNone")}</span>
-                        )}
-                        <button onClick={handleSkipSlot} className="text-[10px] tracking-[0.3em] uppercase text-[#7a7a7a] hover:text-[#f0eee9] transition-colors cursor-pointer">{t("booking.slotFallbackCta")} →</button>
+
+                    {/* Skip option */}
+                    {!calBooking && (
+                      <div className="mt-6 pt-4 border-t border-white/[0.04] text-center">
+                        <button onClick={handleSkipSlot} className="text-[10px] tracking-[0.3em] uppercase text-[#7a7a7a] hover:text-[#f0eee9] transition-colors cursor-pointer">
+                          {t("booking.slotFallbackCta")} →
+                        </button>
                       </div>
                     )}
                   </div>
@@ -753,7 +709,7 @@ export default function Booking() {
                         <motion.div initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.5, ease: "easeOut" }}>
                           <p className="text-[10px] tracking-[0.5em] uppercase text-[#c9a96e]/60 mb-6 font-light">{t("booking.label")}</p>
                           <h3 className="text-[#f0eee9] text-2xl sm:text-3xl font-serif font-light mb-4 leading-tight">
-                            {selectedSlot ? t("booking.bookingSuccessTitle") : t("booking.sessionReady")}
+                            {calBooking ? t("booking.bookingSuccessTitle") : t("booking.sessionReady")}
                           </h3>
                           <p className="text-[#9a9a9a] text-sm leading-[1.8] max-w-md mx-auto mb-8 font-light">
                             {t("booking.completeViaWhatsApp")}
@@ -775,19 +731,19 @@ export default function Booking() {
                             Your session is confirmed. A confirmation receipt has been sent to your email.
                             Your chart will be prepared based on the details you provided.
                           </p>
-                          {selectedSlot && (
+                          {calBooking && (
                             <div className="inline-block border border-[#c9a96e]/20 bg-[#c9a96e]/[0.04] px-6 py-4 mb-6">
                               <p className="text-[9px] tracking-[0.3em] uppercase text-[#7a7a7a] mb-1 font-light">{t("booking.confirmSlot")}</p>
-                              <p className="text-[#f0eee9] text-base font-serif font-light">{formatDateLong(selectedSlot.start)}</p>
-                              <p className="text-[#c9a96e] font-mono text-sm mt-1">{formatSlotTime(selectedSlot.start)} — {formatSlotTime(selectedSlot.end)} (IST)</p>
+                              <p className="text-[#f0eee9] text-base font-serif font-light">{formatDateLong(calBooking.startTime)}</p>
+                              <p className="text-[#c9a96e] font-mono text-sm mt-1">{formatSlotTime(calBooking.startTime)} — {formatSlotTime(calBooking.endTime)} (IST)</p>
                             </div>
                           )}
                           {/* Meeting link */}
-                          {meetingLink && (
+                          {(meetingLink || calBooking?.videoCallUrl) && (
                             <VideoCallRoom
-                              roomUrl={meetingLink}
+                              roomUrl={meetingLink || calBooking?.videoCallUrl || null}
                               roomName={null}
-                              scheduledAt={selectedSlot?.start || null}
+                              scheduledAt={calBooking?.startTime || null}
                             />
                           )}
                         </motion.div>
@@ -804,10 +760,10 @@ export default function Booking() {
                               <span className="text-[#7a7a7a] font-light">{t("booking.summaryDuration")}</span>
                               <span className="text-[#f0eee9] font-light">{selectedDuration} min</span>
                             </div>
-                            {selectedSlot && (
+                            {calBooking && (
                               <div className="flex justify-between gap-4">
                                 <span className="text-[#7a7a7a] font-light shrink-0">{t("booking.confirmSlot")}</span>
-                                <span className="text-[#f0eee9] font-light text-right font-mono">{formatDateShort(selectedSlot.start)} · {formatSlotTime(selectedSlot.start)}</span>
+                                <span className="text-[#f0eee9] font-light text-right font-mono">{formatDateShort(calBooking.startTime)} · {formatSlotTime(calBooking.startTime)}</span>
                               </div>
                             )}
                             <div className="border-t border-white/[0.06] pt-3 mt-3 flex justify-between">

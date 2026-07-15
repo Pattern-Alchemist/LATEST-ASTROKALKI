@@ -350,6 +350,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "booking.step.slot": "Schedule",
     "booking.slotTitle": "Choose your moment.",
     "booking.slotSubtitle": "These are the times I'm currently holding open. Pick one and it's yours — no back-and-forth, no waiting.",
+    "booking.calSubtitle": "Pick a date and time from the calendar below. Your session will be confirmed instantly — no back-and-forth.",
     "booking.slotLoading": "Finding open slots…",
     "booking.slotEmpty": "No slots are open for this session length right now.",
     "booking.slotEmptyHint": "You can still book below — send the request directly and I'll reply with times that work.",

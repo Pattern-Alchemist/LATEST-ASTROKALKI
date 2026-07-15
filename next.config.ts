@@ -24,7 +24,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      "frame-src https://www.youtube-nocookie.com https://youtube-nocookie.com",
+      "frame-src https://www.youtube-nocookie.com https://youtube-nocookie.com https://cal.com https://*.cal.com",
       "connect-src 'self' ws: wss: http://localhost:* https://localhost:*",
       "frame-ancestors 'none'",
       "base-uri 'self'",
