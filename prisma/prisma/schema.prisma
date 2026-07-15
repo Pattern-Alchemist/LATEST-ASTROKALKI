@@ -1,0 +1,754 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Booking {
+  id          String   @id @default(cuid())
+  name        String
+  email       String
+  phone       String?
+  duration    Int      // 30, 60, or 90 minutes
+  price       String
+  contexts    String   // JSON array of emotional context strings
+  birthDate   String?
+  birthTime   String?
+  birthPlace  String?
+  message     String?
+  status      String   @default("pending") // pending, confirmed, completed, cancelled, no_show, refunded
+  referredBy  String?
+  // ─── Payment (Phase 12) ───
+  paymentIntentId String? @unique
+  stripeEventId   String? // Stripe webhook event ID for dedup
+  // ─── Scheduling ───
+  scheduledAt DateTime? // confirmed session date/time
+  slotId      String?  // link to AvailabilitySlot if booked via calendar
+  // ─── Video call room (Daily.co) ───
+  roomName    String?  // Daily.co room name
+  roomUrl     String?  // Daily.co join URL
+  // ─── Lifecycle (Phase 14) ───
+  cancelledAt    DateTime?
+  cancelledReason String?
+  refundedAt     DateTime?
+  refundId       String?  // Stripe refund ID
+  rescheduledAt  DateTime?
+  rescheduledFromId String?
+  // ─── Phase 16: Bundle & portal ───
+  bundlePurchaseId String?
+  clientNotesJson  String?
+  portalUnlockedAt DateTime?
+  portalLastSeenAt DateTime?
+  // ─── Timestamps ───
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  recordedReadings RecordedReading[]
+  slot            AvailabilitySlot? @relation("SlotBooking")
+  events          BookingEvent[]
+  bundlePurchase  BundlePurchase? @relation(fields: [bundlePurchaseId], references: [id])
+  portalNotes     PortalNote[]
+  activities      PortalActivity[]
+
+  @@index([bundlePurchaseId])
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  event     String   // section_view, button_click, booking_start, booking_step, booking_complete, micro_reading, newsletter_signup
+  data      String   // JSON payload
+  page      String
+  timestamp DateTime @default(now())
+  sessionId String
+}
+
+// ─── Phase 12: BookingEvent audit trail ───
+model BookingEvent {
+  id         String   @id @default(cuid())
+  bookingId  String
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type       String   // payment_intent_succeeded, payment_intent_failed, booking_created, slot_marked_booked, daily_room_created, confirmation_email_sent, confirmation_email_failed, rescheduled, cancelled, refund_requested, refunded
+  source     String?  // stripe-webhook, confirm-booking-route, admin-ui, system
+  payload    String?  // JSON
+  createdAt  DateTime @default(now())
+
+  @@index([bookingId, createdAt])
+}
+
+// ─── Phase 13: Email event tracking ───
+model EmailEvent {
+  id         String   @id @default(cuid())
+  emailId    String   // Resend email ID
+  to         String
+  type       String   // email.delivered, email.opened, email.clicked, email.bounced, email.complained
+  bookingId  String?
+  template   String?
+  sequence   String?  // welcome, post-session, recovery
+  stage      Int?
+  metadata   String?  // JSON
+  createdAt  DateTime @default(now())
+
+  @@index([emailId])
+  @@index([createdAt])
+}
+
+model SentEmail {
+  id          String   @id @default(cuid())
+  emailId     String   @unique  // Resend email ID
+  to          String
+  subject     String
+  template    String?
+  bookingId   String?
+  sequence    String?  // welcome, post-session, recovery
+  stage       Int?
+  metadata    String?  // JSON send tags
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  bouncedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([bookingId])
+}
+
+model Newsletter {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  source       String?
+  // ─── Drip automation (Enhancement #1) ───
+  dripStage    Int      @default(0)  // 0=welcome sent, 1=day2 sent, 2=day5 sent, 3=complete
+  lastDripAt   DateTime?
+  // ─── Birthday automation (Enhancement #5) ───
+  birthMonth   Int?     // 1-12, optional
+  lastBirthdayYear Int? // to avoid duplicate annual sends
+  // ─── Opt-out (Enhancement #1) ───
+  optedOut     Boolean  @default(false)
+  optedOutAt   DateTime?
+  // ─── Preference center (upgrade) ───
+  prefSessions Boolean  @default(true) // session-related emails
+  prefBlog     Boolean  @default(true) // new articles / insights
+  prefDrip     Boolean  @default(true) // nurture drip sequence
+  createdAt    DateTime @default(now())
+}
+
+model Insight {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String
+  category      String
+  excerpt       String
+  content       String   // Markdown content
+  readTime      String
+  published     Boolean  @default(false)
+  featuredImage String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model MicroReading {
+  id                    String   @id @default(cuid())
+  email                 String
+  birthMonth            Int
+  emotionalPattern      String
+  relationshipFrustration String
+  resultHint            String
+  // ─── Email audit (Enhancement from prior session) ───
+  emailSentAt           DateTime?
+  // ─── Drip tagging (Enhancement #1) ───
+  // When a micro-reading is captured, the user is also enrolled into the
+  // newsletter drip if their email isn't already there. This flag tracks
+  // whether that enrolment happened from a micro-reading context so drip
+  // emails can reference the pattern they identified.
+  enrolledFromReading   Boolean  @default(false)
+  createdAt             DateTime @default(now())
+}
+
+// ─── Enhancement #4: Abandoned-flow recovery ───
+// Persists partial micro-reading state so we can email users who dropped mid-flow.
+model AbandonedFlow {
+  id            String   @id @default(cuid())
+  email         String
+  flowType      String   // "micro-reading" | "booking"
+  // Current step the user reached (1-based; 0 means they only entered email)
+  step          Int      @default(0)
+  // JSON blob with everything they selected so far
+  partialData   String
+  // Whether the recovery email has been sent
+  recovered     Boolean  @default(false)
+  recoveredAt   DateTime?
+  // Whether they came back after the recovery email
+  converted     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── Enhancement #10: SEO pillar pages ───
+// Long-form essays, one per emotional pattern. Stored in DB so admin can edit,
+// but seeded at app boot if empty (see /src/lib/pillar-seed.ts).
+model PillarArticle {
+  id            String   @id @default(cuid())
+  slug          String   @unique  // e.g. "abandonment-loop"
+  patternKey    String   // abandonment | control | people-pleasing | emotional-numbness | overthinking | self-doubt
+  title         String
+  subtitle      String
+  // Markdown body — long-form, 1500+ words
+  body          String
+  metaDescription String
+  // SEO intent keyword this article targets
+  targetKeyword String
+  // Read time in minutes
+  readTime      Int      @default(8)
+  published     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Referral {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  referrerName  String
+  referrerEmail String
+  uses          Int      @default(0)
+  lastUsedAt    DateTime?
+  createdAt     DateTime @default(now())
+  referralUses  ReferralUse[]
+}
+
+model ReferralUse {
+  id          String   @id @default(cuid())
+  referralId  String
+  email       String   // the person who used the code
+  name        String?
+  createdAt   DateTime @default(now())
+  referral    Referral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+}
+
+model Testimonial {
+  id        String   @id @default(cuid())
+  quote     String
+  context   String
+  initials  String
+  detail    String?
+  avatarUrl String?
+  videoUrl  String?
+  featured  Boolean  @default(false)
+  order     Int      @default(0)
+  // ─── Moderation (upgrade) ───
+  status    String   @default("pending") // pending | approved | rejected
+  email     String?  // submitter email (for public submissions)
+  pattern   String?  // optional pattern tag
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RecordedReading {
+  id        String   @id @default(cuid())
+  bookingId String?
+  audioUrl  String
+  title     String
+  duration  Int      // in minutes
+  price     String
+  createdAt DateTime @default(now())
+
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+}
+
+model Membership {
+  id              String   @id @default(cuid())
+  email           String
+  name            String
+  plan            String   // monthly, yearly
+  status          String   @default("active") // active, cancelled, expired
+  stripeSessionId String?
+  stripeCustomerId String?
+  stripeSubscriptionId String?
+  currentPeriodEnd DateTime?
+  cancelAtPeriodEnd Boolean @default(false)
+  userId          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ─── Availability slots for self-serve booking calendar (upgrade) ───
+model AvailabilitySlot {
+  id        String   @id @default(cuid())
+  start     DateTime
+  end       DateTime
+  duration  Int      // 30 | 60 | 90
+  status    String   @default("open") // open | held | booked
+  bookingId String?  @unique
+  createdAt DateTime @default(now())
+  booking   Booking? @relation("SlotBooking", fields: [bookingId], references: [id], onDelete: SetNull)
+}
+
+// ─── Member portal auth (NextAuth + Prisma adapter, upgrade) ───
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Google Calendar integration (Enhancement #62) ───
+model GoogleCalendarCredentials {
+  id              String    @id @default(cuid())
+  email           String    @unique // user's email for bookings
+  accessToken     String    // OAuth2 access token (encrypted in production)
+  refreshToken    String?   // OAuth2 refresh token for token refresh
+  expiryDate      DateTime? // When access token expires
+  enabledAt       DateTime  @default(now())
+  lastUsedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Community Pattern Circles (Enhancement #71) ───
+model PatternCircle {
+  id              String    @id @default(cuid())
+  name            String    // e.g., "The Overthinker Circle"
+  slug            String    @unique
+  description     String
+  pattern         String    // pattern name (e.g., "overthinker")
+  primaryColor    String    // hex or rgb color
+  memberCount     Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  members         CircleMember[]
+  posts           CirclePost[]
+}
+
+model CircleMember {
+  id              String    @id @default(cuid())
+  circleId        String
+  email           String
+  joinedAt        DateTime  @default(now())
+  role            String    @default("member") // "member" | "moderator" | "admin"
+  circle          PatternCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  
+  @@unique([circleId, email])
+}
+
+model CirclePost {
+  id              String    @id @default(cuid())
+  circleId        String
+  authorEmail     String
+  title           String?
+  content         String
+  likes           Int       @default(0)
+  replies         CircleReply[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  circle          PatternCircle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+}
+
+model CircleReply {
+  id              String    @id @default(cuid())
+  postId          String
+  authorEmail     String
+  content         String
+  likes           Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  post            CirclePost @relation(fields: [postId], references: [id], onDelete: Cascade)
+}
+
+// ─── Moderated Q&A Forum (Enhancement #75) ───
+model ForumCategory {
+  id              String    @id @default(cuid())
+  name            String    // e.g., "Pattern Recognition"
+  slug            String    @unique
+  description     String?
+  color           String    @default("#c9a96e")
+  questionCount   Int       @default(0)
+  createdAt       DateTime  @default(now())
+  questions       ForumQuestion[]
+}
+
+model ForumQuestion {
+  id              String    @id @default(cuid())
+  categoryId      String
+  authorEmail     String
+  title           String
+  content         String
+  tags            String    @default("") // comma-separated tags
+  isFeatured      Boolean   @default(false)
+  isModerated     Boolean   @default(true)
+  isAnswered      Boolean   @default(false)
+  views           Int       @default(0)
+  upvotes         Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  category        ForumCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  answers         ForumAnswer[]
+}
+
+model ForumAnswer {
+  id              String    @id @default(cuid())
+  questionId      String
+  authorEmail     String
+  content         String
+  isModerated     Boolean   @default(true)
+  isMarkedSolution Boolean @default(false)
+  upvotes         Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  question        ForumQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model SiteConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ─── M6-a: AI Chat history (Ask AstroKalki) ───
+model ChatConversation {
+  id        String   @id @default(cuid())
+  email     String   // member email
+  title     String   @default("New conversation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  ChatMessage[]
+}
+
+model ChatMessage {
+  id              String   @id @default(cuid())
+  conversationId  String
+  role            String   // "user" | "assistant"
+  content         String
+  createdAt       DateTime @default(now())
+  conversation    ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+// ─── M6-b: Birth chart analysis (VLM) ───
+model ChartAnalysis {
+  id            String   @id @default(cuid())
+  email         String
+  imageUrl      String   // stored chart image path
+  analysis      String   // VLM-generated interpretation
+  identifiedPatterns String // JSON array of pattern slugs
+  createdAt     DateTime @default(now())
+}
+
+// ─── M6-c: Audio narration tracking (TTS) ───
+model AudioNarration {
+  id        String   @id @default(cuid())
+  slug      String   @unique // article slug
+  title     String
+  audioUrl  String
+  duration  Int      // seconds
+  voice     String   @default("tongtong")
+  createdAt DateTime @default(now())
+}
+
+// ─── M6-e: Pattern portrait (Image Generation) ───
+model PatternPortrait {
+  id        String   @id @default(cuid())
+  email     String
+  pattern   String   // atlas pattern slug
+  prompt    String
+  imageUrl  String
+  createdAt DateTime @default(now())
+}
+
+// ─── M7-a: Email course enrollment ───
+model EmailCourseEnrollment {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  stage        Int      @default(0) // 0=enrolled, 1=day1, 2=day2, 3=day3, 4=day4, 5=day5, 6=complete
+  lastSentAt   DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+}
+
+// ─── M7-b: Pattern Journal ───
+model JournalEntry {
+  id          String   @id @default(cuid())
+  email       String
+  date        DateTime
+  mood        String   // "heavy" | "numb" | "anxious" | "clear" | "angry" | "tender"
+  energy      Int      // 1-5
+  trigger     String?  // what triggered them today
+  pattern     String?  // recognized pattern slug
+  note        String?  // free-text reflection
+  insight     String?  // AI-generated insight (optional, generated weekly)
+  createdAt   DateTime @default(now())
+}
+
+// ─── M7-c: Session recap tracking ───
+model SessionRecap {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  email       String
+  prepSentAt  DateTime?
+  recapSentAt DateTime?
+  integrationPrompts String? // JSON array of prompts
+  createdAt   DateTime @default(now())
+}
+
+// ─── M8-b: Programmatic SEO city × pattern pages ───
+model ProgrammaticPage {
+  id          String   @id @default(cuid())
+  slug        String   @unique // e.g. "abandonment-loop-mumbai"
+  pattern     String   // atlas pattern slug
+  city        String   // city name
+  state       String?  // Indian state
+  content     String   // generated page content (markdown)
+  searchQuery String   // target search query
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── M8-c: AI-generated social share images ───
+model SocialImage {
+  id        String   @id @default(cuid())
+  slug      String   @unique // article/guide slug
+  imageUrl  String
+  prompt    String
+  createdAt DateTime @default(now())
+}
+
+// ─── M9-a: Verified reviews (testimonial → booking link) ───
+// Extends Testimonial model with bookingId field (added via migration-safe optional field)
+// Reuse Testimonial model; add bookingId as optional String? — but to avoid schema conflicts,
+// we store the verification in a separate model.
+model VerifiedReview {
+  id            String   @id @default(cuid())
+  testimonialId String   @unique
+  bookingId     String
+  verifiedAt    DateTime @default(now())
+}
+
+// ─── M9-c: A/B testing experiments ───
+model Experiment {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  page        String   // e.g. "hero", "booking_cta"
+  variants    String   // JSON array of variant definitions
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assignments ExperimentAssignment[]
+}
+
+model ExperimentAssignment {
+  id            String   @id @default(cuid())
+  experimentId  String
+  sessionId     String   // anonymous session ID (cookie)
+  variant       String   // variant name
+  converted     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  experiment    Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, sessionId])
+}
+
+// ─── M9-d: Case studies ───
+model CaseStudy {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  pattern     String   // primary pattern
+  clientInitials String
+  clientAge   Int?
+  consentGiven Boolean @default(false)
+  problem     String   // markdown
+  patternSection String // markdown — the pattern identified
+  session     String   // markdown — what happened in session
+  shift       String   // markdown — the shift that occurred
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── M10-a: Birth charts (calculated) ───
+model BirthChart {
+  id          String   @id @default(cuid())
+  email       String
+  name        String
+  birthDate   String
+  birthTime   String
+  birthPlace  String
+  lat         Float?
+  lng         Float?
+  tzOffset    Float?   // hours
+  chartData   String   // JSON: planetary positions, houses, aspects
+  svgChart    String?  // rendered SVG
+  createdAt   DateTime @default(now())
+}
+
+// ─── M10-b/c: Transits ───
+model TransitCache {
+  id        String   @id @default(cuid())
+  date      DateTime @unique
+  planets   String   // JSON: { sun: {sign, degree}, moon: {...}, ... }
+  createdAt DateTime @default(now())
+}
+
+model UserTransit {
+  id          String   @id @default(cuid())
+  email       String
+  date        DateTime
+  transitData String   // JSON
+  patternActivation String? // JSON: which user patterns are activated
+  insight     String?  // AI-generated insight
+  createdAt   DateTime @default(now())
+}
+
+// ─── Phase 16: Bundle products (session packages) ───
+
+enum BundlePurchaseStatus {
+  paid
+  active
+  partially_used
+  expired
+  refunded
+  canceled
+}
+
+enum PortalNoteVisibility {
+  admin
+  shared
+  client
+  private_session
+}
+
+enum PortalNoteType {
+  general
+  reflection
+  question
+  summary
+  admin_internal
+}
+
+model BundleProduct {
+  id                 String   @id @default(cuid())
+  slug               String   @unique
+  title              String
+  description        String?
+  active             Boolean  @default(true)
+  stripeProductId    String?
+  stripePriceId      String?  @unique
+  sessionCount       Int
+  validityDays       Int?
+  metadataJson       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  purchases BundlePurchase[]
+}
+
+model BundlePurchase {
+  id                      String   @id @default(cuid())
+  originBookingId         String?  // provenance: which booking triggered this purchase
+  email                   String
+  name                    String?
+  phone                   String?
+  stripeCustomerId        String?
+  stripePaymentIntentId   String?  @unique
+  stripeCheckoutSessionId String?  @unique
+  bundleProductId         String
+  status                  BundlePurchaseStatus @default(paid)
+  totalSessions           Int
+  remainingSessions       Int
+  startsAt                DateTime?
+  expiresAt               DateTime?
+  notes                   String?
+  metadataJson            String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  bundleProduct BundleProduct    @relation(fields: [bundleProductId], references: [id])
+  portalNotes   PortalNote[]
+  bookings      Booking[]
+  activities    PortalActivity[]
+
+  @@index([email])
+  @@index([stripePaymentIntentId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model PortalNote {
+  id                 String   @id @default(cuid())
+  bundlePurchaseId   String?
+  bookingId          String?
+  authorRole         String
+  authorName         String?
+  authorEmail        String?
+  noteType           PortalNoteType @default(general)
+  visibility         PortalNoteVisibility @default(admin)
+  title              String?
+  body               String
+  pinned             Boolean  @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  bundlePurchase BundlePurchase? @relation(fields: [bundlePurchaseId], references: [id])
+  booking        Booking?        @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId, deletedAt])
+  @@index([bundlePurchaseId, deletedAt])
+  @@index([visibility])
+}
+
+model PortalActivity {
+  id                 String   @id @default(cuid())
+  bookingId          String?
+  bundlePurchaseId   String?
+  eventType          String
+  eventSource        String?
+  payloadJson        String?
+  createdAt          DateTime @default(now())
+
+  booking        Booking?        @relation(fields: [bookingId], references: [id])
+  bundlePurchase BundlePurchase? @relation(fields: [bundlePurchaseId], references: [id])
+
+  @@index([eventType])
+  @@index([bookingId])
+  @@index([bundlePurchaseId])
+}
