@@ -1,0 +1,44 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+.next
+out
+dist
+build
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Cal.diy (has its own Docker context)
+cal-diy/node_modules
+cal-diy/.next
+cal-diy/.turbo
+cal-diy/.yarn
+
+# Misc
+*.log
+*.zip
+tool-results
+scripts
+*.bak
+db/*.db
+db/*.db-journal

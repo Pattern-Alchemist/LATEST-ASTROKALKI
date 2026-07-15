@@ -1,0 +1,3 @@
+[submodule "cal-diy"]
+	path = cal-diy
+	url = https://github.com/Pattern-Alchemist/cal.diy.git

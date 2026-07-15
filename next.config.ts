@@ -24,7 +24,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      "frame-src https://www.youtube-nocookie.com https://youtube-nocookie.com https://cal.com https://*.cal.com",
+      "frame-src https://www.youtube-nocookie.com https://youtube-nocookie.com https://cal.com https://*.cal.com http://localhost:3001 http://localhost:3000",
       "connect-src 'self' ws: wss: http://localhost:* https://localhost:*",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -48,6 +48,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   typescript: {
     ignoreBuildErrors: false,
   },

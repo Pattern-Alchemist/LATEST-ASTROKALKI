@@ -1,0 +1,120 @@
+version: "3.8"
+
+# ─── AstroKalki + Self-hosted Cal.com (cal.diy) ───────────────────
+#
+# USAGE:
+#   docker compose up -d          # Start everything
+#   docker compose logs -f cal    # Watch Cal logs
+#   docker compose logs -f app    # Watch AstroKalki logs
+#
+# DEFAULT CREDENTIALS (Cal.com):
+#   Email                  Password            Role
+#   free@example.com       free                Free user
+#   pro@example.com        pro                 Pro user
+#   admin@example.com      ADMINadmin2022!     Admin user
+#
+# After first start, create event types at:
+#   http://localhost:3001/event-types
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: calcom
+      POSTGRES_PASSWORD: ${CAL_POSTGRES_PASSWORD:-calcom2026}
+      POSTGRES_DB: calcom
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calcom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── Redis (Cal.com caching/sessions) ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── Cal.com (cal.diy) ─────────────────────────────────────────
+  cal:
+    build:
+      context: ./cal-diy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      # ── Database ──
+      DATABASE_URL: postgresql://calcom:${CAL_POSTGRES_PASSWORD:-calcom2026}@postgres:5432/calcom
+      DATABASE_DIRECT_URL: postgresql://calcom:${CAL_POSTGRES_PASSWORD:-calcom2026}@postgres:5432/calcom
+
+      # ── Auth ──
+      NEXTAUTH_URL: ${CAL_PUBLIC_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${CAL_NEXTAUTH_SECRET:-changeme-generate-with-openssl-rand-base64-32}
+
+      # ── Encryption ──
+      CALENDSO_ENCRYPTION_KEY: ${CAL_ENCRYPTION_KEY:-changeme-generate-with-openssl-rand-base64-24}
+
+      # ── URLs ──
+      NEXT_PUBLIC_WEBAPP_URL: ${CAL_PUBLIC_URL:-http://localhost:3001}
+      NEXT_PUBLIC_API_URL: ${CAL_PUBLIC_URL:-http://localhost:3001}/api
+      NEXT_PUBLIC_EMBED_LIB_URL: ${CAL_PUBLIC_URL:-http://localhost:3001}/embed/embed.js
+
+      # ── Redis ──
+      REDIS_URL: redis://redis:6379
+
+      # ── Disable heavy features ──
+      DISABLE_VIDEOS: "true"
+      NEXT_PUBLIC_LOGGER_LEVEL: "5"
+
+      # ── Node memory ──
+      NODE_OPTIONS: "--max-old-space-size=4096"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ─── AstroKalki (Next.js app) ───────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "file:./dev.db"
+      NEXT_PUBLIC_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      # Point booking to self-hosted Cal.com
+      NEXT_PUBLIC_CAL_LINK: ${CAL_USERNAME:-astrokalki}/consultation
+      NEXT_PUBLIC_CAL_ORIGIN: ${CAL_PUBLIC_URL:-http://localhost:3001}
+    depends_on:
+      cal:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
