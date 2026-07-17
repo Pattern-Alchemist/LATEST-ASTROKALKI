@@ -12,7 +12,6 @@ import {
   Copy,
   Eye,
   Star,
-  ChevronDown,
   RefreshCw,
   ArrowUpRight,
   TrendingUp,
@@ -68,6 +67,18 @@ import { Input } from "@/components/ui/input";
 import AdminRoomsPanel from "@/components/admin/rooms-panel";
 import EmailAnalyticsPanel from "@/components/admin/email-analytics-panel";
 import FunnelDashboard from "@/components/admin/funnel-dashboard";
+
+/* ─── NEW: Shared admin UI components ────────────────────────────── */
+
+import AdminStatCard, { MiniStat } from "@/components/admin/admin-stat-card";
+import {
+  useToast,
+  toastSuccess,
+  toastError,
+  toastWarning,
+  toastBulk,
+} from "@/components/admin/admin-toast";
+import ActivityFeed, { DEMO_ACTIVITIES } from "@/components/admin/activity-feed";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -197,59 +208,7 @@ function formatDateTime(dateStr: string) {
 function formatPrice(price: string) {
   const num = parseFloat(price.replace(/[^0-9.]/g, ""));
   if (isNaN(num)) return price;
-  return "₹" + num.toLocaleString("en-IN");
-}
-
-// ─── Stat Card Component ──────────────────────────────────────────
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  icon,
-  accent,
-  delay = 0,
-}: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
-  icon: React.ReactNode;
-  accent: string;
-  delay?: number;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay, ease: [0.25, 0.46, 0.45, 0.94] }}
-    >
-      <Card className="card-depth bg-[#0a0a0a] border-white/[0.04] hover:border-white/[0.08] transition-all duration-500">
-        <CardContent className="p-6">
-          <div className="flex items-start justify-between">
-            <div className="space-y-2">
-              <p className="text-body-cinematic text-xs uppercase tracking-[0.2em]">
-                {title}
-              </p>
-              <p className="text-editorial text-2xl sm:text-3xl text-[#f0eee9]">
-                {value}
-              </p>
-              {subtitle && (
-                <p className="text-body-cinematic text-xs flex items-center gap-1">
-                  <TrendingUp className="size-3 text-emerald-400" />
-                  {subtitle}
-                </p>
-              )}
-            </div>
-            <div
-              className={`rounded-lg p-3 ${accent}`}
-            >
-              {icon}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
+  return "\u20B9" + num.toLocaleString("en-IN");
 }
 
 // ─── Status Badge ─────────────────────────────────────────────────
@@ -267,9 +226,10 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── Main Dashboard Component ─────────────────────────────────────
+// ─── Inner Dashboard (needs toast context) ────────────────────────
 
-export default function AdminDashboard() {
+function DashboardInner() {
+  const { addToast } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [subscribers, setSubscribers] = useState<NewsletterSub[]>([]);
@@ -281,6 +241,7 @@ export default function AdminDashboard() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [copiedRoomId, setCopiedRoomId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // ─── Data Fetching ────────────────────────────────────────────────
 
@@ -348,7 +309,6 @@ export default function AdminDashboard() {
     loadAllData();
   }, [loadAllData]);
 
-  // Re-fetch bookings when filter changes
   useEffect(() => {
     if (!loading) {
       fetchBookings();
@@ -359,11 +319,14 @@ export default function AdminDashboard() {
     setRefreshing(true);
     await loadAllData();
     setRefreshing(false);
+    toastSuccess(addToast, "Dashboard refreshed", "All data is up to date");
   };
 
-  // ─── Booking Status Update ──────────────────────────────────────
+  // ─── Booking Status Update (with toast) ────────────────────────
 
   const updateBookingStatus = async (id: string, newStatus: string) => {
+    const booking = bookings.find((b) => b.id === id);
+    const prevStatus = booking?.status || "unknown";
     setUpdatingId(id);
     try {
       const res = await fetch(`/api/admin/bookings/${id}`, {
@@ -376,60 +339,69 @@ export default function AdminDashboard() {
         setBookings((prev) =>
           prev.map((b) => (b.id === id ? { ...b, status: newStatus } : b))
         );
-        // Update stats after status change
         fetchStats();
+        toastSuccess(
+          addToast,
+          `Booking ${STATUS_CONFIG[newStatus]?.label?.toLowerCase() || newStatus}`,
+          `${booking?.name || id} moved from ${prevStatus} to ${newStatus}`
+        );
+      } else {
+        toastError(addToast, "Status update failed", "Could not update booking status. Try again.");
       }
-    } catch (err) {
-      console.error("Failed to update booking status:", err);
+    } catch {
+      toastError(addToast, "Network error", "Failed to connect to the server.");
     } finally {
       setUpdatingId(null);
     }
   };
 
   const deleteBooking = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this booking?")) return;
+    const booking = bookings.find((b) => b.id === id);
     try {
       const res = await fetch(`/api/admin/bookings/${id}`, { method: "DELETE" });
       if (res.ok) {
         setBookings((prev) => prev.filter((b) => b.id !== id));
         fetchStats();
+        toastSuccess(addToast, "Booking deleted", `${booking?.name || id} has been permanently removed`);
+      } else {
+        toastError(addToast, "Delete failed", "Could not delete this booking.");
       }
-    } catch (err) {
-      console.error("Failed to delete booking:", err);
+    } catch {
+      toastError(addToast, "Network error", "Failed to connect to the server.");
     }
   };
 
   // ─── Booking Actions (reschedule / cancel / refund) ─────────────
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const cancelBooking = async (id: string) => {
-    const reason = prompt("Cancellation reason (optional):") || undefined;
+    const booking = bookings.find((b) => b.id === id);
     setActionLoading(id);
     try {
       const res = await fetch(`/api/bookings/${id}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason, notifyCustomer: true }),
+        body: JSON.stringify({ reason: "Admin cancelled", notifyCustomer: true }),
       });
       if (res.ok) {
         setBookings((prev) => prev.map((b) => b.id === id ? { ...b, status: "cancelled" } : b));
         fetchStats();
+        toastWarning(addToast, "Booking cancelled", `${booking?.name || id} was cancelled and the customer has been notified`);
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to cancel booking");
+        toastError(addToast, "Cancel failed", data.error || "Could not cancel booking.");
       }
-    } catch (err) {
-      console.error("Failed to cancel booking:", err);
+    } catch {
+      toastError(addToast, "Network error", "Failed to connect to the server.");
     } finally {
       setActionLoading(null);
     }
   };
 
   const refundBooking = async (id: string) => {
-    if (!confirm("Process a full refund for this booking?")) return;
+    const booking = bookings.find((b) => b.id === id);
     setActionLoading(id);
     try {
-      const res = await fetch(`/api/stripe/refund-booking`, {
+      const res = await fetch("/api/stripe/refund-booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingId: id, reason: "requested_by_customer" }),
@@ -437,12 +409,13 @@ export default function AdminDashboard() {
       if (res.ok) {
         setBookings((prev) => prev.map((b) => b.id === id ? { ...b, status: "refunded" } : b));
         fetchStats();
+        toastSuccess(addToast, "Refund processed", `Full refund issued for ${booking?.name || id}`);
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to process refund");
+        toastError(addToast, "Refund failed", data.error || "Could not process refund.");
       }
-    } catch (err) {
-      console.error("Failed to process refund:", err);
+    } catch {
+      toastError(addToast, "Network error", "Failed to connect to the server.");
     } finally {
       setActionLoading(null);
     }
@@ -455,13 +428,13 @@ export default function AdminDashboard() {
         method: "POST",
       });
       if (res.ok) {
-        alert(`Confirmation email resent to ${booking.email}`);
+        toastSuccess(addToast, "Email resent", `Confirmation email sent to ${booking.email}`);
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to resend email");
+        toastError(addToast, "Resend failed", data.error || "Could not resend email.");
       }
-    } catch (err) {
-      console.error("Failed to resend email:", err);
+    } catch {
+      toastError(addToast, "Network error", "Failed to connect to the server.");
     } finally {
       setActionLoading(null);
     }
@@ -480,6 +453,7 @@ export default function AdminDashboard() {
       document.body.removeChild(input);
     }
     setCopiedRoomId(id);
+    toastSuccess(addToast, "Link copied", "Meeting URL copied to clipboard");
     setTimeout(() => setCopiedRoomId(null), 2000);
   };
 
@@ -525,103 +499,63 @@ export default function AdminDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
-              <Link
-                href="/admin/testimonials"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Moderate public testimonial submissions"
-              >
+              {/* ── Nav Links ── */}
+              <Link href="/admin/testimonials" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Moderate public testimonial submissions">
                 <Quote className="size-3" />
                 <span className="hidden sm:inline">Testimonials</span>
               </Link>
-              <Link
-                href="/admin/case-studies"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Long-form anonymised client journeys — Problem, Pattern, Session, Shift"
-              >
+              <Link href="/admin/case-studies" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Long-form anonymised client journeys">
                 <FileText className="size-3" />
                 <span className="hidden sm:inline">Case Studies</span>
               </Link>
-              <Link
-                href="/admin/analytics"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Behaviour & conversion analytics"
-              >
+              <Link href="/admin/analytics" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Behaviour & conversion analytics">
                 <BarChart3 className="size-3" />
                 <span className="hidden sm:inline">Analytics</span>
               </Link>
-              <Link
-                href="/admin/revenue"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Revenue, churn & cohort analytics"
-              >
+              <Link href="/admin/revenue" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Revenue, churn & cohort analytics">
                 <TrendingUp className="size-3" />
                 <span className="hidden sm:inline">Revenue</span>
               </Link>
-              <Link
-                href="/admin/referrals"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Referral programme dashboard"
-              >
+              <Link href="/admin/referrals" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Referral programme dashboard">
                 <Users className="size-3" />
                 <span className="hidden sm:inline">Referrals</span>
               </Link>
-              <Link
-                href="/admin/recordings"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Upload & manage recorded session audio"
-              >
+              <Link href="/admin/recordings" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Upload & manage recorded session audio">
                 <Disc3 className="size-3" />
                 <span className="hidden sm:inline">Recordings</span>
               </Link>
-              <Link
-                href="/admin/availability"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Toggle AstroKalki's real-time availability indicator"
-              >
+              <Link href="/admin/availability" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Toggle real-time availability indicator">
                 <Radio className="size-3" />
                 <span className="hidden sm:inline">Availability</span>
               </Link>
-              <Link
-                href="/admin/write"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="AI writing assistant — draft new articles in the AstroKalki voice"
-              >
+              <Link href="/admin/write" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="AI writing assistant">
                 <PenLine className="size-3" />
                 <span className="hidden sm:inline">Write</span>
               </Link>
-              <Link
-                href="/admin/programmatic"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Programmatic SEO — city × pattern landing pages"
-              >
+              <Link href="/admin/programmatic" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Programmatic SEO pages">
                 <Globe className="size-3" />
                 <span className="hidden sm:inline">SEO Pages</span>
               </Link>
-              <Link
-                href="/admin/seo"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="Local SEO — 200+ city × pattern pages (LOCAL generator, no LLM)"
-              >
+              <Link href="/admin/seo" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="Local SEO city x pattern pages">
                 <MapPin className="size-3" />
                 <span className="hidden sm:inline">Local SEO</span>
               </Link>
-              <Link
-                href="/admin/social-images"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-                title="AI-generated social share images for every article + guide"
-              >
+              <Link href="/admin/social-images" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5" title="AI-generated social share images">
                 <Images className="size-3" />
                 <span className="hidden sm:inline">Social Images</span>
               </Link>
-              <a
-                href="/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
-              >
+              <a href="/" target="_blank" rel="noopener noreferrer" className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5">
                 <ExternalLink className="size-3" />
                 <span className="hidden sm:inline">View Site</span>
               </a>
+
+              {/* ── NEW: Activity Feed Bell ── */}
+              <ActivityFeed
+                initialActivities={DEMO_ACTIVITIES}
+                pollInterval={15000}
+              />
+
+              {/* ── Refresh ── */}
               <Button
                 variant="ghost"
                 size="icon"
@@ -629,10 +563,10 @@ export default function AdminDashboard() {
                 disabled={refreshing}
                 className="text-[#9a9a9a] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
               >
-                <RefreshCw
-                  className={`size-4 ${refreshing ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
               </Button>
+
+              {/* ── Logout ── */}
               <Button
                 variant="ghost"
                 size="sm"
@@ -655,17 +589,11 @@ export default function AdminDashboard() {
           {/* ─── Tab Navigation ─────────────────────────────────── */}
           <div className="mb-6 sm:mb-8">
             <TabsList className="bg-[#0a0a0a] border border-white/[0.04] rounded-lg p-1 h-auto flex-wrap gap-1">
-              <TabsTrigger
-                value="overview"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="overview" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Eye className="size-3.5 mr-1.5" />
                 Overview
               </TabsTrigger>
-              <TabsTrigger
-                value="bookings"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="bookings" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Calendar className="size-3.5 mr-1.5" />
                 Bookings
                 {stats && stats.pendingBookings > 0 && (
@@ -674,38 +602,23 @@ export default function AdminDashboard() {
                   </span>
                 )}
               </TabsTrigger>
-              <TabsTrigger
-                value="newsletter"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="newsletter" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Mail className="size-3.5 mr-1.5" />
                 Newsletter
               </TabsTrigger>
-              <TabsTrigger
-                value="micro-readings"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="micro-readings" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Star className="size-3.5 mr-1.5" />
                 Micro-Readings
               </TabsTrigger>
-              <TabsTrigger
-                value="rooms"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="rooms" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Video className="size-3.5 mr-1.5" />
                 Rooms
               </TabsTrigger>
-              <TabsTrigger
-                value="email-analytics"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="email-analytics" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <Mail className="size-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Email</span>
               </TabsTrigger>
-              <TabsTrigger
-                value="funnel"
-                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
-              >
+              <TabsTrigger value="funnel" className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm">
                 <BarChart3 className="size-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Funnel</span>
               </TabsTrigger>
@@ -713,200 +626,150 @@ export default function AdminDashboard() {
           </div>
 
           {/* ═══════════════════════════════════════════════════════
-              OVERVIEW TAB
+              OVERVIEW TAB — now with animated stat cards
               ═══════════════════════════════════════════════════════ */}
           <TabsContent value="overview">
-            {loading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-                {[...Array(4)].map((_, i) => (
-                  <Card
-                    key={i}
-                    className="bg-[#0a0a0a] border-white/[0.04]"
-                  >
-                    <CardContent className="p-6 space-y-3">
-                      <Skeleton className="h-3 w-20 bg-[#141414]" />
-                      <Skeleton className="h-8 w-24 bg-[#141414]" />
-                      <Skeleton className="h-3 w-32 bg-[#141414]" />
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : stats ? (
-              <>
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
-                  <StatCard
-                    title="Total Bookings"
-                    value={stats.totalBookings}
-                    subtitle={`${stats.recentBookings} this week`}
-                    icon={<Calendar className="size-5 text-[#c9a96e]" />}
-                    accent="bg-[#c9a96e]/10"
-                    delay={0}
-                  />
-                  <StatCard
-                    title="Pending"
-                    value={stats.pendingBookings}
-                    subtitle={
-                      stats.pendingBookings > 0
-                        ? "Needs attention"
-                        : "All clear"
-                    }
-                    icon={
-                      <AlertCircle className="size-5 text-yellow-400" />
-                    }
-                    accent="bg-yellow-400/10"
-                    delay={0.1}
-                  />
-                  <StatCard
-                    title="Revenue"
-                    value={`₹${stats.totalRevenue.toLocaleString("en-IN")}`}
-                    subtitle={`From ${stats.confirmedBookings + stats.completedBookings} bookings`}
-                    icon={<DollarSign className="size-5 text-emerald-400" />}
-                    accent="bg-emerald-400/10"
-                    delay={0.2}
-                  />
-                  <StatCard
-                    title="Newsletter"
-                    value={stats.totalNewsletter}
-                    subtitle={`${stats.recentNewsletter} this week`}
-                    icon={<Users className="size-5 text-blue-400" />}
-                    accent="bg-blue-400/10"
-                    delay={0.3}
-                  />
-                </div>
+            {/* Primary Stats — AdminStatCard with animated counters */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
+              <AdminStatCard
+                title="Total Bookings"
+                value={stats?.totalBookings ?? 0}
+                subtitle={stats ? `${stats.recentBookings} this week` : undefined}
+                icon={<Calendar className="size-5 text-[#c9a96e]" />}
+                accent="bg-[#c9a96e]/10"
+                delay={0}
+                loading={loading}
+              />
+              <AdminStatCard
+                title="Pending"
+                value={stats?.pendingBookings ?? 0}
+                subtitle={stats
+                  ? stats.pendingBookings > 0 ? "Needs attention" : "All clear"
+                  : undefined}
+                icon={<AlertCircle className="size-5 text-yellow-400" />}
+                accent="bg-yellow-400/10"
+                delay={0.1}
+                loading={loading}
+              />
+              <AdminStatCard
+                title="Revenue"
+                value={stats ? `\u20B9${stats.totalRevenue.toLocaleString("en-IN")}` : "\u20B90"}
+                subtitle={stats ? `From ${stats.confirmedBookings + stats.completedBookings} bookings` : undefined}
+                icon={<DollarSign className="size-5 text-emerald-400" />}
+                accent="bg-emerald-400/10"
+                delay={0.2}
+                loading={loading}
+              />
+              <AdminStatCard
+                title="Newsletter"
+                value={stats?.totalNewsletter ?? 0}
+                subtitle={stats ? `${stats.recentNewsletter} this week` : undefined}
+                icon={<Users className="size-5 text-blue-400" />}
+                accent="bg-blue-400/10"
+                delay={0.3}
+                loading={loading}
+              />
+            </div>
 
-                {/* Secondary Stats */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-8">
-                  <motion.div
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.4 }}
-                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
-                  >
-                    <p className="text-emerald-400 text-lg sm:text-xl font-bold">
-                      {stats.completedBookings}
-                    </p>
-                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
-                      Completed
-                    </p>
-                  </motion.div>
-                  <motion.div
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.45 }}
-                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
-                  >
-                    <p className="text-[#c9a96e] text-lg sm:text-xl font-bold">
-                      {stats.confirmedBookings}
-                    </p>
-                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
-                      Confirmed
-                    </p>
-                  </motion.div>
-                  <motion.div
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.5 }}
-                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
-                  >
-                    <p className="text-[#c0392b] text-lg sm:text-xl font-bold">
-                      {stats.cancelledBookings}
-                    </p>
-                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
-                      Cancelled
-                    </p>
-                  </motion.div>
-                  <motion.div
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.55 }}
-                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
-                  >
-                    <p className="text-blue-400 text-lg sm:text-xl font-bold">
-                      {stats.totalMicroReadings}
-                    </p>
-                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
-                      Micro-Leads
-                    </p>
-                  </motion.div>
-                </div>
+            {/* Secondary Stats — MiniStat with animated counters */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-8">
+              <MiniStat
+                value={stats?.completedBookings ?? 0}
+                label="Completed"
+                color="text-emerald-400"
+                delay={0.4}
+                loading={loading}
+              />
+              <MiniStat
+                value={stats?.confirmedBookings ?? 0}
+                label="Confirmed"
+                color="text-[#c9a96e]"
+                delay={0.45}
+                loading={loading}
+              />
+              <MiniStat
+                value={stats?.cancelledBookings ?? 0}
+                label="Cancelled"
+                color="text-[#c0392b]"
+                delay={0.5}
+                loading={loading}
+              />
+              <MiniStat
+                value={stats?.totalMicroReadings ?? 0}
+                label="Micro-Leads"
+                color="text-blue-400"
+                delay={0.55}
+                loading={loading}
+              />
+            </div>
 
-                {/* Recent Bookings Quick View */}
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.6 }}
-                >
-                  <Card className="bg-[#0a0a0a] border-white/[0.04]">
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
-                            RECENT BOOKINGS
-                          </CardTitle>
-                          <CardDescription className="text-body-cinematic text-xs mt-1">
-                            Latest booking activity
-                          </CardDescription>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setActiveTab("bookings")}
-                          className="text-[#c9a96e] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10 text-xs"
-                        >
-                          View All
-                          <ArrowUpRight className="size-3 ml-1" />
-                        </Button>
+            {/* Recent Bookings Quick View */}
+            {!loading && stats && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.6 }}
+              >
+                <Card className="bg-[#0a0a0a] border-white/[0.04]">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
+                          RECENT BOOKINGS
+                        </CardTitle>
+                        <CardDescription className="text-body-cinematic text-xs mt-1">
+                          Latest booking activity
+                        </CardDescription>
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      {bookings.length === 0 ? (
-                        <div className="text-center py-8">
-                          <Calendar className="size-8 text-[#333] mx-auto mb-2" />
-                          <p className="text-body-cinematic text-sm">
-                            No bookings yet
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3 max-h-80 overflow-y-auto">
-                          {bookings.slice(0, 5).map((booking) => (
-                            <div
-                              key={booking.id}
-                              className="flex items-center justify-between p-3 rounded-lg bg-[#111]/50 border border-white/[0.02] hover:border-white/[0.06] transition-colors"
-                            >
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[#f0eee9] text-sm font-medium truncate">
-                                  {booking.name}
-                                </p>
-                                <p className="text-body-cinematic text-xs truncate">
-                                  {booking.email}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-3 ml-3">
-                                <span className="text-[#c9a96e] text-sm font-medium whitespace-nowrap">
-                                  {formatPrice(booking.price)}
-                                </span>
-                                <StatusBadge status={booking.status} />
-                              </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setActiveTab("bookings")}
+                        className="text-[#c9a96e] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10 text-xs"
+                      >
+                        View All
+                        <ArrowUpRight className="size-3 ml-1" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {bookings.length === 0 ? (
+                      <div className="text-center py-8">
+                        <Calendar className="size-8 text-[#333] mx-auto mb-2" />
+                        <p className="text-body-cinematic text-sm">No bookings yet</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-80 overflow-y-auto">
+                        {bookings.slice(0, 5).map((booking) => (
+                          <div
+                            key={booking.id}
+                            className="flex items-center justify-between p-3 rounded-lg bg-[#111]/50 border border-white/[0.02] hover:border-white/[0.06] transition-colors"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[#f0eee9] text-sm font-medium truncate">{booking.name}</p>
+                              <p className="text-body-cinematic text-xs truncate">{booking.email}</p>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              </>
-            ) : (
+                            <div className="flex items-center gap-3 ml-3">
+                              <span className="text-[#c9a96e] text-sm font-medium whitespace-nowrap">
+                                {formatPrice(booking.price)}
+                              </span>
+                              <StatusBadge status={booking.status} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {/* Error state */}
+            {!loading && !stats && (
               <div className="text-center py-12">
                 <AlertCircle className="size-8 text-[#c0392b] mx-auto mb-3" />
-                <p className="text-body-cinematic">
-                  Failed to load dashboard data
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={handleRefresh}
-                  className="btn-outline-gold mt-4"
-                >
+                <p className="text-body-cinematic">Failed to load dashboard data</p>
+                <Button variant="outline" onClick={handleRefresh} className="btn-outline-gold mt-4">
                   Retry
                 </Button>
               </div>
@@ -917,11 +780,7 @@ export default function AdminDashboard() {
               BOOKINGS TAB
               ═══════════════════════════════════════════════════════ */}
           <TabsContent value="bookings">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
               <Card className="bg-[#0a0a0a] border-white/[0.04]">
                 <CardHeader>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -930,8 +789,7 @@ export default function AdminDashboard() {
                         BOOKING MANAGEMENT
                       </CardTitle>
                       <CardDescription className="text-body-cinematic text-xs mt-1">
-                        {filteredBookings.length} booking
-                        {filteredBookings.length !== 1 ? "s" : ""} found
+                        {filteredBookings.length} booking{filteredBookings.length !== 1 ? "s" : ""} found
                       </CardDescription>
                     </div>
                     <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
@@ -949,21 +807,11 @@ export default function AdminDashboard() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
-                          <SelectItem value="all" className="text-xs text-[#e8e6e1] focus:bg-[#c9a96e]/10 focus:text-[#c9a96e]">
-                            All Status
-                          </SelectItem>
-                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
-                            Pending
-                          </SelectItem>
-                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
-                            Confirmed
-                          </SelectItem>
-                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
-                            Completed
-                          </SelectItem>
-                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
-                            Cancelled
-                          </SelectItem>
+                          <SelectItem value="all" className="text-xs text-[#e8e6e1] focus:bg-[#c9a96e]/10 focus:text-[#c9a96e]">All Status</SelectItem>
+                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">Pending</SelectItem>
+                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">Confirmed</SelectItem>
+                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">Completed</SelectItem>
+                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">Cancelled</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -973,25 +821,15 @@ export default function AdminDashboard() {
                   {loading ? (
                     <div className="space-y-3">
                       {[...Array(5)].map((_, i) => (
-                        <Skeleton
-                          key={i}
-                          className="h-14 w-full bg-[#141414] rounded-lg"
-                        />
+                        <Skeleton key={i} className="h-14 w-full bg-[#141414] rounded-lg" />
                       ))}
                     </div>
                   ) : filteredBookings.length === 0 ? (
                     <div className="text-center py-12">
                       <Calendar className="size-10 text-[#333] mx-auto mb-3" />
-                      <p className="text-body-cinematic text-sm">
-                        No bookings found
-                      </p>
+                      <p className="text-body-cinematic text-sm">No bookings found</p>
                       {bookingFilter !== "all" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setBookingFilter("all")}
-                          className="text-[#c9a96e] mt-3 text-xs"
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => setBookingFilter("all")} className="text-[#c9a96e] mt-3 text-xs">
                           Clear filter
                         </Button>
                       )}
@@ -1003,30 +841,14 @@ export default function AdminDashboard() {
                         <Table>
                           <TableHeader>
                             <TableRow className="border-white/[0.04] hover:bg-transparent">
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Name
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Email
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Duration
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Price
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Status
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Meeting
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Date
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium text-right">
-                                Actions
-                              </TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Name</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Email</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Duration</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Price</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Status</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Meeting</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Date</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium text-right">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1040,54 +862,27 @@ export default function AdminDashboard() {
                                   transition={{ duration: 0.3, delay: i * 0.03 }}
                                   className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
                                 >
-                                  <TableCell className="text-[#f0eee9] text-sm font-medium">
-                                    {booking.name}
-                                  </TableCell>
-                                  <TableCell className="text-body-cinematic text-xs">
-                                    {booking.email}
-                                  </TableCell>
+                                  <TableCell className="text-[#f0eee9] text-sm font-medium">{booking.name}</TableCell>
+                                  <TableCell className="text-body-cinematic text-xs">{booking.email}</TableCell>
                                   <TableCell>
                                     <div className="flex items-center gap-1 text-body-cinematic text-xs">
-                                      <Clock className="size-3" />
-                                      {booking.duration}m
+                                      <Clock className="size-3" />{booking.duration}m
                                     </div>
                                   </TableCell>
-                                  <TableCell className="text-[#c9a96e] text-sm font-medium">
-                                    {formatPrice(booking.price)}
-                                  </TableCell>
-                                  <TableCell>
-                                    <StatusBadge status={booking.status} />
-                                  </TableCell>
+                                  <TableCell className="text-[#c9a96e] text-sm font-medium">{formatPrice(booking.price)}</TableCell>
+                                  <TableCell><StatusBadge status={booking.status} /></TableCell>
                                   <TableCell>
                                     {(booking.status === "confirmed" || booking.status === "completed") && booking.roomUrl ? (
                                       <div className="flex items-center gap-1">
-                                        <Badge
-                                          variant="outline"
-                                          className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]"
-                                        >
-                                          <CheckCircle2 className="size-2.5 mr-1" />
-                                          Ready
+                                        <Badge variant="outline" className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]">
+                                          <CheckCircle2 className="size-2.5 mr-1" />Ready
                                         </Badge>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="size-6 p-0 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
-                                          onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)}
-                                          aria-label="Copy meeting link"
-                                        >
-                                          {copiedRoomId === booking.id ? (
-                                            <CheckCircle2 className="size-3 text-emerald-400" />
-                                          ) : (
-                                            <Copy className="size-3" />
-                                          )}
+                                        <Button variant="ghost" size="sm" className="size-6 p-0 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+                                          onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)} aria-label="Copy meeting link">
+                                          {copiedRoomId === booking.id ? <CheckCircle2 className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
                                         </Button>
-                                        <a
-                                          href={booking.roomUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex size-6 items-center justify-center text-[#555] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors"
-                                          aria-label="Open meeting in new tab"
-                                        >
+                                        <a href={booking.roomUrl} target="_blank" rel="noopener noreferrer"
+                                          className="inline-flex size-6 items-center justify-center text-[#555] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors" aria-label="Open meeting">
                                           <ExternalLink className="size-3" />
                                         </a>
                                       </div>
@@ -1095,98 +890,46 @@ export default function AdminDashboard() {
                                       <span className="text-[#555] text-[10px]">—</span>
                                     )}
                                   </TableCell>
-                                  <TableCell className="text-body-cinematic text-xs">
-                                    {formatDate(booking.createdAt)}
-                                  </TableCell>
+                                  <TableCell className="text-body-cinematic text-xs">{formatDate(booking.createdAt)}</TableCell>
                                   <TableCell className="text-right">
                                     <div className="flex items-center justify-end gap-1">
-                                      {/* Resend Email (only for confirmed/completed) */}
                                       {(booking.status === "confirmed" || booking.status === "completed") && (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
-                                          onClick={() => resendConfirmation(booking)}
-                                          title="Resend confirmation email"
-                                          disabled={actionLoading === booking.id}
-                                        >
+                                        <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+                                          onClick={() => resendConfirmation(booking)} title="Resend confirmation email" disabled={actionLoading === booking.id}>
                                           <Mail className="size-3" />
                                         </Button>
                                       )}
-                                      {/* Reschedule (only for pending/confirmed) */}
                                       {(booking.status === "pending" || booking.status === "confirmed") && (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
-                                          onClick={() => alert("Reschedule requires selecting a new slot — use the Rooms tab to manage scheduling.")}
-                                          title="Reschedule"
-                                          disabled={actionLoading === booking.id}
-                                        >
+                                        <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
+                                          onClick={() => toastWarning(addToast, "Reschedule", "Use the Rooms tab to manage scheduling.")} title="Reschedule" disabled={actionLoading === booking.id}>
                                           <RotateCcw className="size-3" />
                                         </Button>
                                       )}
-                                      {/* Cancel (only for pending/confirmed) */}
                                       {(booking.status === "pending" || booking.status === "confirmed") && (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
-                                          onClick={() => cancelBooking(booking.id)}
-                                          title="Cancel booking"
-                                          disabled={actionLoading === booking.id}
-                                        >
+                                        <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+                                          onClick={() => cancelBooking(booking.id)} title="Cancel booking" disabled={actionLoading === booking.id}>
                                           <Ban className="size-3" />
                                         </Button>
                                       )}
-                                      {/* Refund (only for confirmed with payment) */}
                                       {booking.status === "confirmed" && (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
-                                          onClick={() => refundBooking(booking.id)}
-                                          title="Refund payment"
-                                          disabled={actionLoading === booking.id}
-                                        >
+                                        <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
+                                          onClick={() => refundBooking(booking.id)} title="Refund payment" disabled={actionLoading === booking.id}>
                                           <CreditCard className="size-3" />
                                         </Button>
                                       )}
-                                      <Select
-                                        value={booking.status}
-                                        onValueChange={(val) =>
-                                          updateBookingStatus(booking.id, val)
-                                        }
-                                        disabled={updatingId === booking.id}
-                                      >
-                                        <SelectTrigger
-                                          size="sm"
-                                          className="h-7 text-[10px] w-24 bg-[#111] border-white/[0.06] text-[#e8e6e1]"
-                                        >
+                                      <Select value={booking.status} onValueChange={(val) => updateBookingStatus(booking.id, val)} disabled={updatingId === booking.id}>
+                                        <SelectTrigger size="sm" className="h-7 text-[10px] w-24 bg-[#111] border-white/[0.06] text-[#e8e6e1]">
                                           <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
-                                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
-                                            Pending
-                                          </SelectItem>
-                                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
-                                            Confirmed
-                                          </SelectItem>
-                                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
-                                            Completed
-                                          </SelectItem>
-                                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
-                                            Cancelled
-                                          </SelectItem>
+                                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">Pending</SelectItem>
+                                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">Confirmed</SelectItem>
+                                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">Completed</SelectItem>
+                                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">Cancelled</SelectItem>
                                         </SelectContent>
                                       </Select>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
-                                        onClick={() => deleteBooking(booking.id)}
-                                        title="Delete booking"
-                                      >
+                                      <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+                                        onClick={() => deleteBooking(booking.id)} title="Delete booking">
                                         <Trash2 className="size-3" />
                                       </Button>
                                     </div>
@@ -1201,157 +944,69 @@ export default function AdminDashboard() {
                       {/* Mobile Cards */}
                       <div className="md:hidden space-y-3 max-h-[70vh] overflow-y-auto">
                         {filteredBookings.map((booking, i) => (
-                          <motion.div
-                            key={booking.id}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
+                          <motion.div key={booking.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3, delay: i * 0.05 }}
-                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3"
-                          >
+                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3">
                             <div className="flex items-start justify-between">
                               <div className="min-w-0 flex-1">
-                                <p className="text-[#f0eee9] text-sm font-medium truncate">
-                                  {booking.name}
-                                </p>
-                                <p className="text-body-cinematic text-xs truncate">
-                                  {booking.email}
-                                </p>
+                                <p className="text-[#f0eee9] text-sm font-medium truncate">{booking.name}</p>
+                                <p className="text-body-cinematic text-xs truncate">{booking.email}</p>
                               </div>
                               <StatusBadge status={booking.status} />
                             </div>
                             <div className="flex items-center justify-between text-xs">
                               <div className="flex items-center gap-3">
-                                <span className="text-body-cinematic flex items-center gap-1">
-                                  <Clock className="size-3" />
-                                  {booking.duration}m
-                                </span>
-                                <span className="text-[#c9a96e] font-medium">
-                                  {formatPrice(booking.price)}
-                                </span>
+                                <span className="text-body-cinematic flex items-center gap-1"><Clock className="size-3" />{booking.duration}m</span>
+                                <span className="text-[#c9a96e] font-medium">{formatPrice(booking.price)}</span>
                               </div>
-                              <span className="text-body-cinematic">
-                                {formatDate(booking.createdAt)}
-                              </span>
+                              <span className="text-body-cinematic">{formatDate(booking.createdAt)}</span>
                             </div>
-                            {/* Meeting link for mobile (additional row above status controls) */}
                             {(booking.status === "confirmed" || booking.status === "completed") && booking.roomUrl && (
                               <div className="flex items-center gap-2 pt-2 border-t border-white/[0.04]">
-                                <Badge
-                                  variant="outline"
-                                  className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]"
-                                >
-                                  <CheckCircle2 className="size-2.5 mr-1" />
-                                  Room Ready
+                                <Badge variant="outline" className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]">
+                                  <CheckCircle2 className="size-2.5 mr-1" />Room Ready
                                 </Badge>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
-                                  onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)}
-                                >
-                                  {copiedRoomId === booking.id ? (
-                                    <CheckCircle2 className="size-3 text-emerald-400 mr-1" />
-                                  ) : (
-                                    <Copy className="size-3 mr-1" />
-                                  )}
-                                  {copiedRoomId === booking.id ? "Copied!" : "Copy Link"}
+                                <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+                                  onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)}>
+                                  {copiedRoomId === booking.id ? <><CheckCircle2 className="size-3 text-emerald-400 mr-1" />Copied!</> : <><Copy className="size-3 mr-1" />Copy Link</>}
                                 </Button>
-                                <a
-                                  href={booking.roomUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors"
-                                >
-                                  <ExternalLink className="size-3" />
-                                  Open
+                                <a href={booking.roomUrl} target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors">
+                                  <ExternalLink className="size-3" />Open
                                 </a>
                               </div>
                             )}
                             <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
                               <div className="flex items-center gap-1">
                                 {(booking.status === "confirmed" || booking.status === "completed") && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
-                                    onClick={() => resendConfirmation(booking)}
-                                    title="Resend email"
-                                    disabled={actionLoading === booking.id}
-                                  >
-                                    <Mail className="size-3" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+                                    onClick={() => resendConfirmation(booking)} disabled={actionLoading === booking.id}><Mail className="size-3" /></Button>
                                 )}
                                 {(booking.status === "pending" || booking.status === "confirmed") && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
-                                    onClick={() => alert("Reschedule requires selecting a new slot — use the Rooms tab.")}
-                                    title="Reschedule"
-                                  >
-                                    <RotateCcw className="size-3" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
+                                    onClick={() => toastWarning(addToast, "Reschedule", "Use the Rooms tab to manage scheduling.")} disabled={actionLoading === booking.id}><RotateCcw className="size-3" /></Button>
                                 )}
                                 {(booking.status === "pending" || booking.status === "confirmed") && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
-                                    onClick={() => cancelBooking(booking.id)}
-                                    title="Cancel"
-                                  >
-                                    <Ban className="size-3" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+                                    onClick={() => cancelBooking(booking.id)} disabled={actionLoading === booking.id}><Ban className="size-3" /></Button>
                                 )}
                                 {booking.status === "confirmed" && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
-                                    onClick={() => refundBooking(booking.id)}
-                                    title="Refund"
-                                  >
-                                    <CreditCard className="size-3" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
+                                    onClick={() => refundBooking(booking.id)} disabled={actionLoading === booking.id}><CreditCard className="size-3" /></Button>
                                 )}
                               </div>
                               <div className="flex items-center gap-1">
-                                <Select
-                                  value={booking.status}
-                                  onValueChange={(val) =>
-                                    updateBookingStatus(booking.id, val)
-                                  }
-                                  disabled={updatingId === booking.id}
-                                >
-                                  <SelectTrigger
-                                    size="sm"
-                                    className="h-7 text-[10px] w-24 bg-[#0a0a0a] border-white/[0.06] text-[#e8e6e1]"
-                                  >
-                                    <SelectValue />
-                                  </SelectTrigger>
+                                <Select value={booking.status} onValueChange={(val) => updateBookingStatus(booking.id, val)} disabled={updatingId === booking.id}>
+                                  <SelectTrigger size="sm" className="h-7 text-[10px] w-24 bg-[#0a0a0a] border-white/[0.06] text-[#e8e6e1]"><SelectValue /></SelectTrigger>
                                   <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
-                                    <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
-                                      Pending
-                                    </SelectItem>
-                                    <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
-                                      Confirmed
-                                    </SelectItem>
-                                    <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
-                                      Completed
-                                    </SelectItem>
-                                    <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
-                                      Cancelled
-                                    </SelectItem>
+                                    <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">Pending</SelectItem>
+                                    <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">Confirmed</SelectItem>
+                                    <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">Completed</SelectItem>
+                                    <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">Cancelled</SelectItem>
                                   </SelectContent>
                                 </Select>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
-                                  onClick={() => deleteBooking(booking.id)}
-                                >
-                                  <Trash2 className="size-3" />
-                                </Button>
+                                <Button variant="ghost" size="icon" className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+                                  onClick={() => deleteBooking(booking.id)}><Trash2 className="size-3" /></Button>
                               </div>
                             </div>
                           </motion.div>
@@ -1368,124 +1023,67 @@ export default function AdminDashboard() {
               NEWSLETTER TAB
               ═══════════════════════════════════════════════════════ */}
           <TabsContent value="newsletter">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
               <Card className="bg-[#0a0a0a] border-white/[0.04]">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
-                        NEWSLETTER SUBSCRIBERS
-                      </CardTitle>
+                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">NEWSLETTER SUBSCRIBERS</CardTitle>
                       <CardDescription className="text-body-cinematic text-xs mt-1">
-                        {subscribers.length} subscriber
-                        {subscribers.length !== 1 ? "s" : ""}
+                        {subscribers.length} subscriber{subscribers.length !== 1 ? "s" : ""}
                       </CardDescription>
                     </div>
                     <div className="bg-[#c9a96e]/10 border border-[#c9a96e]/20 rounded-lg px-3 py-1.5">
-                      <span className="text-[#c9a96e] text-xs font-medium">
-                        {subscribers.length} total
-                      </span>
+                      <span className="text-[#c9a96e] text-xs font-medium">{subscribers.length} total</span>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
-                    <div className="space-y-3">
-                      {[...Array(5)].map((_, i) => (
-                        <Skeleton
-                          key={i}
-                          className="h-10 w-full bg-[#141414] rounded-lg"
-                        />
-                      ))}
-                    </div>
+                    <div className="space-y-3">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full bg-[#141414] rounded-lg" />)}</div>
                   ) : subscribers.length === 0 ? (
                     <div className="text-center py-12">
                       <Mail className="size-10 text-[#333] mx-auto mb-3" />
-                      <p className="text-body-cinematic text-sm">
-                        No newsletter subscribers yet
-                      </p>
+                      <p className="text-body-cinematic text-sm">No newsletter subscribers yet</p>
                     </div>
                   ) : (
                     <>
-                      {/* Desktop Table */}
                       <div className="hidden md:block overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow className="border-white/[0.04] hover:bg-transparent">
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                #
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Email
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Source
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Subscribed
-                              </TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">#</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Email</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Source</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Subscribed</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {subscribers.map((sub, i) => (
-                              <motion.tr
-                                key={sub.id}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ duration: 0.3, delay: i * 0.03 }}
-                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
-                              >
-                                <TableCell className="text-[#555] text-xs">
-                                  {i + 1}
-                                </TableCell>
-                                <TableCell className="text-[#f0eee9] text-sm">
-                                  {sub.email}
-                                </TableCell>
+                              <motion.tr key={sub.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: i * 0.03 }}
+                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors">
+                                <TableCell className="text-[#555] text-xs">{i + 1}</TableCell>
+                                <TableCell className="text-[#f0eee9] text-sm">{sub.email}</TableCell>
                                 <TableCell>
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[#9a9a9a] border-white/[0.06] text-[10px]"
-                                  >
+                                  <Badge variant="outline" className="text-[#9a9a9a] border-white/[0.06] text-[10px]">
                                     {sub.source || "website"}
                                   </Badge>
                                 </TableCell>
-                                <TableCell className="text-body-cinematic text-xs">
-                                  {formatDateTime(sub.createdAt)}
-                                </TableCell>
+                                <TableCell className="text-body-cinematic text-xs">{formatDateTime(sub.createdAt)}</TableCell>
                               </motion.tr>
                             ))}
                           </TableBody>
                         </Table>
                       </div>
-
-                      {/* Mobile Cards */}
                       <div className="md:hidden space-y-2 max-h-[70vh] overflow-y-auto">
                         {subscribers.map((sub, i) => (
-                          <motion.div
-                            key={sub.id}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3, delay: i * 0.04 }}
-                            className="flex items-center justify-between p-3 bg-[#111]/50 border border-white/[0.04] rounded-lg"
-                          >
+                          <motion.div key={sub.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: i * 0.04 }}
+                            className="flex items-center justify-between p-3 bg-[#111]/50 border border-white/[0.04] rounded-lg">
                             <div className="min-w-0 flex-1">
-                              <p className="text-[#f0eee9] text-sm truncate">
-                                {sub.email}
-                              </p>
-                              <p className="text-body-cinematic text-[10px]">
-                                {formatDateTime(sub.createdAt)}
-                              </p>
+                              <p className="text-[#f0eee9] text-sm truncate">{sub.email}</p>
+                              <p className="text-body-cinematic text-[10px]">{formatDateTime(sub.createdAt)}</p>
                             </div>
-                            <Badge
-                              variant="outline"
-                              className="text-[#9a9a9a] border-white/[0.06] text-[10px] ml-2"
-                            >
-                              {sub.source || "website"}
-                            </Badge>
+                            <Badge variant="outline" className="text-[#9a9a9a] border-white/[0.06] text-[10px] ml-2">{sub.source || "website"}</Badge>
                           </motion.div>
                         ))}
                       </div>
@@ -1500,160 +1098,83 @@ export default function AdminDashboard() {
               MICRO-READINGS TAB
               ═══════════════════════════════════════════════════════ */}
           <TabsContent value="micro-readings">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
               <Card className="bg-[#0a0a0a] border-white/[0.04]">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
-                        MICRO-READING LEADS
-                      </CardTitle>
+                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">MICRO-READING LEADS</CardTitle>
                       <CardDescription className="text-body-cinematic text-xs mt-1">
-                        {microReadings.length} lead
-                        {microReadings.length !== 1 ? "s" : ""} captured
+                        {microReadings.length} lead{microReadings.length !== 1 ? "s" : ""} captured
                       </CardDescription>
                     </div>
                     <div className="bg-[#c9a96e]/10 border border-[#c9a96e]/20 rounded-lg px-3 py-1.5">
-                      <span className="text-[#c9a96e] text-xs font-medium">
-                        {microReadings.length} total
-                      </span>
+                      <span className="text-[#c9a96e] text-xs font-medium">{microReadings.length} total</span>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
-                    <div className="space-y-3">
-                      {[...Array(5)].map((_, i) => (
-                        <Skeleton
-                          key={i}
-                          className="h-20 w-full bg-[#141414] rounded-lg"
-                        />
-                      ))}
-                    </div>
+                    <div className="space-y-3">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 w-full bg-[#141414] rounded-lg" />)}</div>
                   ) : microReadings.length === 0 ? (
                     <div className="text-center py-12">
                       <Star className="size-10 text-[#333] mx-auto mb-3" />
-                      <p className="text-body-cinematic text-sm">
-                        No micro-reading leads yet
-                      </p>
+                      <p className="text-body-cinematic text-sm">No micro-reading leads yet</p>
                     </div>
                   ) : (
                     <>
-                      {/* Desktop Table */}
                       <div className="hidden lg:block overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow className="border-white/[0.04] hover:bg-transparent">
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Email
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Birth Month
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Emotional Pattern
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Relationship Frustration
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Result Hint
-                              </TableHead>
-                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
-                                Date
-                              </TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Email</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Birth Month</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Emotional Pattern</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Relationship Frustration</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Result Hint</TableHead>
+                              <TableHead className="text-[#9a9a9a] text-xs font-medium">Date</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {microReadings.map((reading, i) => (
-                              <motion.tr
-                                key={reading.id}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{
-                                  duration: 0.3,
-                                  delay: i * 0.03,
-                                }}
-                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
-                              >
-                                <TableCell className="text-[#f0eee9] text-sm">
-                                  {reading.email}
-                                </TableCell>
-                                <TableCell className="text-body-cinematic text-xs">
-                                  {MONTH_NAMES[reading.birthMonth - 1] || reading.birthMonth}
-                                </TableCell>
-                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">
-                                  {reading.emotionalPattern}
-                                </TableCell>
-                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">
-                                  {reading.relationshipFrustration}
-                                </TableCell>
-                                <TableCell className="text-[#c9a96e] text-xs max-w-36 truncate">
-                                  {reading.resultHint}
-                                </TableCell>
-                                <TableCell className="text-body-cinematic text-xs whitespace-nowrap">
-                                  {formatDate(reading.createdAt)}
-                                </TableCell>
+                              <motion.tr key={reading.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: i * 0.03 }}
+                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors">
+                                <TableCell className="text-[#f0eee9] text-sm">{reading.email}</TableCell>
+                                <TableCell className="text-body-cinematic text-xs">{MONTH_NAMES[reading.birthMonth - 1] || reading.birthMonth}</TableCell>
+                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">{reading.emotionalPattern}</TableCell>
+                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">{reading.relationshipFrustration}</TableCell>
+                                <TableCell className="text-[#c9a96e] text-xs max-w-36 truncate">{reading.resultHint}</TableCell>
+                                <TableCell className="text-body-cinematic text-xs whitespace-nowrap">{formatDate(reading.createdAt)}</TableCell>
                               </motion.tr>
                             ))}
                           </TableBody>
                         </Table>
                       </div>
-
-                      {/* Tablet / Mobile Cards */}
                       <div className="lg:hidden space-y-3 max-h-[70vh] overflow-y-auto">
                         {microReadings.map((reading, i) => (
-                          <motion.div
-                            key={reading.id}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3, delay: i * 0.04 }}
-                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3"
-                          >
+                          <motion.div key={reading.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: i * 0.04 }}
+                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3">
                             <div className="flex items-start justify-between">
                               <div className="min-w-0 flex-1">
-                                <p className="text-[#f0eee9] text-sm font-medium truncate">
-                                  {reading.email}
-                                </p>
-                                <p className="text-body-cinematic text-[10px] mt-0.5">
-                                  {formatDate(reading.createdAt)}
-                                </p>
+                                <p className="text-[#f0eee9] text-sm font-medium truncate">{reading.email}</p>
+                                <p className="text-body-cinematic text-[10px] mt-0.5">{formatDate(reading.createdAt)}</p>
                               </div>
-                              <Badge
-                                variant="outline"
-                                className="text-[#c9a96e] border-[#c9a96e]/20 text-[10px] ml-2"
-                              >
+                              <Badge variant="outline" className="text-[#c9a96e] border-[#c9a96e]/20 text-[10px] ml-2">
                                 {MONTH_NAMES[reading.birthMonth - 1] || reading.birthMonth}
                               </Badge>
                             </div>
                             <div className="space-y-2">
                               <div>
-                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
-                                  Emotional Pattern
-                                </p>
-                                <p className="text-body-cinematic text-xs line-clamp-2">
-                                  {reading.emotionalPattern}
-                                </p>
+                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">Emotional Pattern</p>
+                                <p className="text-body-cinematic text-xs line-clamp-2">{reading.emotionalPattern}</p>
                               </div>
                               <div>
-                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
-                                  Frustration
-                                </p>
-                                <p className="text-body-cinematic text-xs line-clamp-2">
-                                  {reading.relationshipFrustration}
-                                </p>
+                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">Frustration</p>
+                                <p className="text-body-cinematic text-xs line-clamp-2">{reading.relationshipFrustration}</p>
                               </div>
                               <div>
-                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
-                                  Result Hint
-                                </p>
-                                <p className="text-[#c9a96e] text-xs line-clamp-2">
-                                  {reading.resultHint}
-                                </p>
+                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">Result Hint</p>
+                                <p className="text-[#c9a96e] text-xs line-clamp-2">{reading.resultHint}</p>
                               </div>
                             </div>
                           </motion.div>
@@ -1667,22 +1188,14 @@ export default function AdminDashboard() {
           </TabsContent>
 
           {/* ═══════════════════════════════════════════════════════
-              ROOMS TAB
+              ROOMS / EMAIL ANALYTICS / FUNNEL TABS
               ═══════════════════════════════════════════════════════ */}
           <TabsContent value="rooms">
             <AdminRoomsPanel />
           </TabsContent>
-
-          {/* ═══════════════════════════════════════════════════════
-              EMAIL ANALYTICS TAB
-              ═══════════════════════════════════════════════════════ */}
           <TabsContent value="email-analytics">
             <EmailAnalyticsPanel />
           </TabsContent>
-
-          {/* ═══════════════════════════════════════════════════════
-              FUNNEL TAB
-              ═══════════════════════════════════════════════════════ */}
           <TabsContent value="funnel">
             <FunnelDashboard />
           </TabsContent>
@@ -1695,16 +1208,18 @@ export default function AdminDashboard() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Star className="size-3 text-[#c9a96e]" />
-              <p className="text-body-cinematic text-[10px]">
-                AstroKalki Admin Dashboard
-              </p>
+              <p className="text-body-cinematic text-[10px]">AstroKalki Admin Dashboard</p>
             </div>
-            <p className="text-[#333] text-[10px]">
-              Sacred pattern recognition platform
-            </p>
+            <p className="text-[#333] text-[10px]">Sacred pattern recognition platform</p>
           </div>
         </div>
       </footer>
     </div>
   );
+}
+
+// ─── Exported page (toast context from admin layout) ─────────────────
+
+export default function AdminDashboard() {
+  return <DashboardInner />;
 }
