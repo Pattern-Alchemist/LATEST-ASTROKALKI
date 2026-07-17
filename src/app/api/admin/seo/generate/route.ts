@@ -30,9 +30,19 @@ import { generateProgrammaticContent } from "@/lib/seo/programmatic-content";
 export async function POST(request: NextRequest) {
   let body: { force?: boolean; pattern?: string; city?: string } = {};
   try {
-    body = await request.json();
-  } catch {
-    // empty body is fine — defaults to "generate all missing"
+    const contentType = request.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      const text = await request.text();
+      if (text && text.trim()) {
+        body = JSON.parse(text);
+      }
+    }
+  } catch (err) {
+    console.error('[seo/generate] JSON parse error:', err);
+    return NextResponse.json(
+      { error: 'Invalid JSON in request body' },
+      { status: 400 }
+    );
   }
 
   const force = body.force === true;
@@ -136,14 +146,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({
+  const response = {
     success: true,
+    timestamp: new Date().toISOString(),
     summary: {
       total: combos.length,
       created,
       updated,
       skipped,
+      coverage: Math.round((((created + updated) / combos.length) * 100 + Number.EPSILON) * 100) / 100,
     },
-    results,
-  });
+    results: results.slice(0, 100), // limit results in response to prevent large payloads
+    resultCount: results.length,
+    message: `Generated ${created + updated} pages. ${skipped} already exist or skipped.`,
+  };
+
+  return NextResponse.json(response, { status: 200 });
 }

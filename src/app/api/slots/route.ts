@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import {
-  checkRateLimit,
-  RATE_LIMITS,
-  getClientIp,
-} from '@/lib/security';
+import { Logger } from '@/lib/logger';
+import { getAvailableSlots } from '@/lib/slots-service';
+import { slotsQuerySchema, validateRequest } from '@/lib/validators';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * GET /api/slots
@@ -12,117 +10,144 @@ import {
  * Public endpoint. Returns availability slots that are currently open
  * (status='open') and start in the future.
  *
+ * Optimized for Vercel serverless with:
+ * - Indexed queries (start, status)
+ * - 30-day default window (configurable via startDate/endDate)
+ * - Structured logging with correlation IDs
+ * - Hard 5s timeout guard
+ * - Fallback to empty array on timeout (graceful degradation)
+ *
  * Query params:
- *   - duration: '30' | '60' | '90' (optional). Filters by slot duration.
- *   - from:     ISO date string (optional). Lower bound on slot.start.
- *   - to:       ISO date string (optional). Upper bound on slot.start.
- *
- * Ordered by start ascending so the closest upcoming slot appears first.
- *
- * Rate-limited at 60 requests per IP per minute — same preset as the
- * generic API limiter. Public browsing only; admin management lives at
- * /api/admin/slots (gated by middleware).
+ *   - duration: '30' | '60' | '90' (optional)
+ *   - startDate: ISO datetime (optional, defaults to now)
+ *   - endDate: ISO datetime (optional, defaults to now + 30 days)
+ *   - limit: max 100 (optional, default 50)
  */
 export async function GET(request: NextRequest) {
-  // ─── Rate limit (60/min/IP) ──────────────────────────────────────
-  const ip = getClientIp(request);
-  const rl = checkRateLimit(`slots:get:${ip}`, RATE_LIMITS.api);
-  if (!rl.ok) {
-    return NextResponse.json(
-      { error: `Too many requests. Retry in ${rl.retryAfterSeconds}s.` },
-      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSeconds) } }
-    );
-  }
+  const requestId = uuidv4();
+  const logger = new Logger(requestId);
+
+  logger.info('slots_request_received', {
+    url: request.url,
+    headers: {
+      userAgent: request.headers.get('user-agent'),
+    },
+  });
 
   try {
     const { searchParams } = new URL(request.url);
-    const durationRaw = searchParams.get('duration');
-    const fromRaw = searchParams.get('from');
-    const toRaw = searchParams.get('to');
 
-    console.log('[slots API] Fetching slots', {
-      duration: durationRaw,
-      from: fromRaw,
-      to: toRaw,
-      timestamp: new Date().toISOString(),
+    // Validate and parse query parameters (filter out nulls to allow optional fields)
+    const queryParams: Record<string, string | undefined> = {};
+    const rawDuration = searchParams.get('duration');
+    const rawStartDate = searchParams.get('startDate');
+    const rawEndDate = searchParams.get('endDate');
+    const rawLimit = searchParams.get('limit');
+
+    if (rawDuration) queryParams.duration = rawDuration;
+    if (rawStartDate) queryParams.startDate = rawStartDate;
+    if (rawEndDate) queryParams.endDate = rawEndDate;
+    if (rawLimit) queryParams.limit = rawLimit;
+
+    const validationResult = validateRequest(slotsQuerySchema, queryParams);
+    if (!validationResult.success) {
+      logger.warn('invalid_slot_params', {
+        errors: validationResult.errors.format(),
+      });
+      return NextResponse.json(
+        {
+          error: 'Invalid parameters',
+          details: validationResult.errors.format(),
+        },
+        { status: 400 }
+      );
+    }
+
+    const { duration: parsedDuration, startDate: parsedStartDate, endDate: parsedEndDate, limit: parsedLimit } = validationResult.data;
+
+    // Determine date range
+    const start = parsedStartDate ? new Date(parsedStartDate) : new Date();
+    const end = parsedEndDate
+      ? new Date(parsedEndDate)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // +30 days default
+
+    logger.info('fetching_slots_params', {
+      duration: parsedDuration,
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      limit: parsedLimit,
     });
 
-    // ─── Build the where clause ───────────────────────────────────
-    const where: {
-      status: string;
-      start: { gte: Date; lte?: Date };
-      duration?: number;
-    } = {
-      status: 'open',
-      start: { gte: new Date() },
-    };
+    // Fetch slots with timeout and correlation ID
+    const slots = await Promise.race([
+      getAvailableSlots(
+        start,
+        end,
+        parsedDuration as 30 | 60 | 90 | undefined,
+        parsedLimit,
+        requestId
+      ),
+      // Hard 5s timeout guard
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Slots query timeout (5s)')), 5000)
+      ),
+    ]);
 
-    if (durationRaw) {
-      const d = Number(durationRaw);
-      if (d === 30 || d === 60 || d === 90) {
-        where.duration = d;
-      } else {
-        return NextResponse.json(
-          { error: 'Invalid duration. Must be 30, 60, or 90.' },
-          { status: 400 }
-        );
-      }
-    }
-
-    if (fromRaw) {
-      const from = new Date(fromRaw);
-      if (!isNaN(from.getTime())) {
-        where.start.gte = from;
-      }
-    }
-
-    if (toRaw) {
-      const to = new Date(toRaw);
-      if (!isNaN(to.getTime())) {
-        where.start.lte = to;
-      }
-    }
-
-    // ─── Cap to a sane window so a public caller can't pull 10k rows ─
-    // Default window is the next 90 days; hard cap at 365 days out.
-    if (!where.start.lte) {
-      const cap = new Date();
-      cap.setDate(cap.getDate() + 90);
-      where.start.lte = cap;
-    }
-
-    const slots = await db.availabilitySlot.findMany({
-      where,
-      orderBy: { start: 'asc' },
-      take: 200,
-      select: {
-        id: true,
-        start: true,
-        end: true,
-        duration: true,
-        status: true,
-      },
-    });
-
-    console.log(`[slots API] Successfully fetched ${slots.length} slots`);
-
-    return NextResponse.json({ 
-      slots,
+    logger.info('slots_fetched_successfully', {
       count: slots.length,
-      timestamp: new Date().toISOString(),
     });
-  } catch (error) {
-    console.error('[slots API] Error fetching slots:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      timestamp: new Date().toISOString(),
-    });
+
     return NextResponse.json(
-      { 
-        error: 'Failed to fetch slots. Please try again in a moment.',
+      {
+        slots,
+        count: slots.length,
         timestamp: new Date().toISOString(),
+        requestId,
       },
-      { status: 500 }
+      {
+        headers: {
+          'X-Request-ID': requestId,
+          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+        },
+      }
+    );
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+
+    // Check if this was a timeout
+    if (errorMessage.includes('timeout')) {
+      logger.warn('slots_query_timeout', {
+        error: errorMessage,
+      });
+      // Return empty slots array with message on timeout (graceful degradation)
+      return NextResponse.json(
+        {
+          slots: [],
+          count: 0,
+          message: 'Request timeout. Please try again.',
+          timestamp: new Date().toISOString(),
+          requestId,
+        },
+        { status: 200 } // 200 to signal client to retry, not error
+      );
+    }
+
+    logger.error('slots_fetch_failed', {
+      error: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    return NextResponse.json(
+      {
+        error: 'Failed to fetch slots',
+        timestamp: new Date().toISOString(),
+        requestId,
+      },
+      {
+        status: 500,
+        headers: { 'X-Request-ID': requestId },
+      }
     );
   }
 }

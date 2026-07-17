@@ -37,7 +37,7 @@ function useAnimatedCounter(
   startOnView = true
 ) {
   const [display, setDisplay] = useState(0);
-  const ref = useRef<HTMLSpanElement>(null);
+  const ref = useRef<HTMLElement>(null);
   const inView = useInView(ref, { once: true, margin: "-50px" });
   const hasStarted = useRef(false);
 
