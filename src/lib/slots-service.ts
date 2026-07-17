@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma';
 import { Logger } from './logger';
-import { executeWithTimeout } from './supabase';
 
 const logger = new Logger();
 
