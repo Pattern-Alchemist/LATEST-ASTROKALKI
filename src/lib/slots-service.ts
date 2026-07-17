@@ -35,7 +35,13 @@ export async function getAvailableSlots(
 
   try {
     // Optimized query using indexed fields
-    const query = prisma.availabilitySlot.findMany({
+    logger.info('query_started', {
+      queryName: 'get_available_slots',
+      timeoutMs: 3000,
+      requestId: actualRequestId,
+    });
+
+    const slots = await prisma.availabilitySlot.findMany({
       where: {
         start: {
           gte: startDate,
@@ -59,12 +65,11 @@ export async function getAvailableSlots(
       take: limit,
     });
 
-    const slots = await executeWithTimeout(
-      'get_available_slots',
-      () => query,
-      3000, // 3s timeout for slot fetch
-      actualRequestId
-    );
+    logger.info('query_completed', {
+      queryName: 'get_available_slots',
+      duration: 0,
+      requestId: actualRequestId,
+    });
 
     // Filter by duration if specified
     const filtered = duration
@@ -105,25 +110,19 @@ export async function bookSlot(
 
   try {
     // Atomic update: only succeed if slot is still 'open'
-    const updatedSlot = await executeWithTimeout(
-      'book_slot',
-      () =>
-        prisma.availabilitySlot.update({
-          where: { id: slotId },
-          data: {
-            status: 'booked',
-            bookingId,
-          },
-          select: {
-            id: true,
-            start: true,
-            end: true,
-            status: true,
-          },
-        }),
-      3000,
-      actualRequestId
-    );
+    const updatedSlot = await prisma.availabilitySlot.update({
+      where: { id: slotId },
+      data: {
+        status: 'booked',
+        bookingId,
+      },
+      select: {
+        id: true,
+        start: true,
+        end: true,
+        status: true,
+      },
+    });
 
     logger.info('slot_booked', {
       slotId,

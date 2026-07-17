@@ -63,19 +63,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { duration, startDate, endDate, limit } = validationResult.data;
+    const { duration: parsedDuration, startDate: parsedStartDate, endDate: parsedEndDate, limit: parsedLimit } = validationResult.data;
 
     // Determine date range
-    const start = startDate ? new Date(startDate) : new Date();
-    const end = endDate
-      ? new Date(endDate)
+    const start = parsedStartDate ? new Date(parsedStartDate) : new Date();
+    const end = parsedEndDate
+      ? new Date(parsedEndDate)
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // +30 days default
 
     logger.info('fetching_slots_params', {
-      duration,
+      duration: parsedDuration,
       startDate: start.toISOString(),
       endDate: end.toISOString(),
-      limit,
+      limit: parsedLimit,
     });
 
     // Fetch slots with timeout and correlation ID
@@ -83,8 +83,8 @@ export async function GET(request: NextRequest) {
       getAvailableSlots(
         start,
         end,
-        duration as 30 | 60 | 90 | undefined,
-        limit,
+        parsedDuration as 30 | 60 | 90 | undefined,
+        parsedLimit,
         requestId
       ),
       // Hard 5s timeout guard
