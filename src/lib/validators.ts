@@ -14,13 +14,13 @@ export const slotsQuerySchema = z.object({
   startDate: z
     .string()
     .datetime()
-    .optional()
-    .describe('ISO 8601 datetime; defaults to now'),
+    .describe('ISO 8601 datetime; defaults to now')
+    .optional(),
   endDate: z
     .string()
     .datetime()
-    .optional()
-    .describe('ISO 8601 datetime; defaults to now + 30 days'),
+    .describe('ISO 8601 datetime; defaults to now + 30 days')
+    .optional(),
   limit: z.coerce
     .number()
     .int()
