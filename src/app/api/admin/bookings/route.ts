@@ -1,65 +1,144 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { Logger } from '@/lib/logger';
+import { prisma } from '@/lib/prisma';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
- * Admin bookings list + search API.
+ * GET /api/admin/bookings
  *
- *   GET /api/admin/bookings?search=<query>&limit=20
+ * Admin-only endpoint to fetch bookings with optional search and filtering.
  *
- * Used by the recording manager's booking picker (Combobox). Returns the
- * most recent bookings whose name OR email contains the search term
- * (case-insensitive), ordered by createdAt desc. Capped at 50 results.
+ * Query params:
+ *   - search: search by name or email (case-insensitive)
+ *   - status: filter by status (pending, confirmed, completed, etc.)
+ *   - limit: max results (default 50, max 200)
+ *   - offset: pagination offset (default 0)
+ *   - sort: sort by field (createdAt, scheduledAt, status)
+ *   - order: asc or desc (default desc)
  *
+ * Used by admin booking picker/table. Returns core booking fields.
  * Auth-gated by middleware.
- *
- * We deliberately keep this endpoint narrow: only the fields the picker
- * needs (id, name, email, duration, price, status, scheduledAt, createdAt).
- * No phone numbers, no birth data — those stay on the booking detail page.
  */
 export async function GET(request: NextRequest) {
+  const requestId = uuidv4();
+  const logger = new Logger(requestId);
+
+  logger.info('admin_bookings_request_received');
+
   try {
     const { searchParams } = new URL(request.url);
+
+    // Parse query params
     const search = (searchParams.get('search') || '').trim();
+    const status = searchParams.get('status');
     const limit = Math.min(
-      50,
-      Math.max(1, parseInt(searchParams.get('limit') || '20', 10))
+      Math.max(parseInt(searchParams.get('limit') || '50', 10), 1),
+      200
     );
+    const offset = Math.max(parseInt(searchParams.get('offset') || '0', 10), 0);
+    const sort = searchParams.get('sort') || 'createdAt';
+    const order =
+      (searchParams.get('order') as 'asc' | 'desc') || 'desc';
 
-    // Build the WHERE clause. SQLite's contains() is case-insensitive but
-    // only works on the same field; we OR across name and email so admins
-    // can search either.
-    const where =
-      search.length === 0
-        ? {}
-        : {
-            OR: [
-              { name: { contains: search } },
-              { email: { contains: search } },
-            ],
-          };
-
-    const bookings = await db.booking.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        duration: true,
-        price: true,
-        status: true,
-        scheduledAt: true,
-        createdAt: true,
-      },
+    logger.info('admin_bookings_query', {
+      search,
+      status,
+      limit,
+      offset,
+      sort,
+      order,
     });
 
-    return NextResponse.json({ bookings });
-  } catch (error) {
-    console.error('Admin bookings search error:', error);
+    // Build where clause with search and filtering
+    const where: any = {};
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (status) {
+      where.status = status;
+    }
+
+    // Build sort clause
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    if (['createdAt', 'scheduledAt', 'status', 'updatedAt'].includes(sort)) {
+      orderBy[sort] = order;
+    } else {
+      orderBy.createdAt = order;
+    }
+
+    // Fetch bookings and total count in parallel
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        orderBy,
+        take: limit,
+        skip: offset,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          duration: true,
+          status: true,
+          scheduledAt: true,
+          createdAt: true,
+          updatedAt: true,
+          price: true,
+          paymentIntentId: true,
+          contexts: true,
+          birthDate: true,
+          birthPlace: true,
+          message: true,
+          liveKitRoom: {
+            select: {
+              id: true,
+              roomName: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+      prisma.booking.count({ where }),
+    ]);
+
+    logger.info('admin_bookings_fetched', {
+      count: bookings.length,
+      total,
+    });
+
     return NextResponse.json(
-      { error: 'Failed to search bookings' },
-      { status: 500 }
+      {
+        bookings,
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+        requestId,
+      },
+      {
+        headers: { 'X-Request-ID': requestId },
+      }
+    );
+  } catch (error) {
+    logger.error('admin_bookings_fetch_failed', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    return NextResponse.json(
+      {
+        error: 'Failed to fetch bookings',
+        requestId,
+      },
+      {
+        status: 500,
+        headers: { 'X-Request-ID': requestId },
+      }
     );
   }
 }

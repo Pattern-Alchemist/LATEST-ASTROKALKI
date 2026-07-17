@@ -3,8 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
+  // Use pooling URL for app, non-pooling for migrations
+  url      = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 model Booking {
@@ -27,9 +29,9 @@ model Booking {
   // ─── Scheduling ───
   scheduledAt DateTime? // confirmed session date/time
   slotId      String?  // link to AvailabilitySlot if booked via calendar
-  // ─── Video call room (Daily.co) ───
-  roomName    String?  // Daily.co room name
-  roomUrl     String?  // Daily.co join URL
+  // ─── Video call room (Daily.co - deprecated, use LiveKitRoom) ───
+  roomName    String?  // Daily.co room name (deprecated)
+  roomUrl     String?  // Daily.co join URL (deprecated)
   // ─── Lifecycle (Phase 14) ───
   cancelledAt    DateTime?
   cancelledReason String?
@@ -52,8 +54,13 @@ model Booking {
   bundlePurchase  BundlePurchase? @relation(fields: [bundlePurchaseId], references: [id])
   portalNotes     PortalNote[]
   activities      PortalActivity[]
+  liveKitRoom     LiveKitRoom?
 
   @@index([bundlePurchaseId])
+  @@index([createdAt])
+  @@index([email])
+  @@index([status])
+  @@index([slotId])
 }
 
 model AnalyticsEvent {
@@ -283,6 +290,28 @@ model AvailabilitySlot {
   bookingId String?  @unique
   createdAt DateTime @default(now())
   booking   Booking? @relation("SlotBooking", fields: [bookingId], references: [id], onDelete: SetNull)
+
+  // Indexes for optimized slot queries
+  @@index([start, status])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ─── LiveKit integration (Phase 4) ───
+model LiveKitRoom {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  roomName    String   // LiveKit room identifier
+  roomUrl     String?  // Optional: full URL to join room
+  
+  // Lifecycle
+  createdAt   DateTime @default(now())
+  deletedAt   DateTime? // When room was cleaned up
+  
+  @@index([bookingId])
+  @@index([roomName])
 }
 
 // ─── Member portal auth (NextAuth + Prisma adapter, upgrade) ───
