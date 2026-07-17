@@ -1,0 +1,667 @@
+     1→     1→     1→"use client";
+     2→     2→     2→
+     3→     3→     3→import Link from "next/link";
+     4→     4→     4→import { useState, useEffect, useCallback } from "react";
+     5→     5→     5→import {
+     6→     6→     6→  RefreshCw,
+     7→     7→     7→  Play,
+     8→     8→     8→  RotateCcw,
+     9→     9→     9→  AlertCircle,
+    10→    10→    10→  CheckCircle2,
+    11→    11→    11→  Loader2,
+    12→    12→    12→  ImageIcon,
+    13→    13→    13→  ExternalLink,
+    14→    14→    14→  Sparkles,
+    15→    15→    15→  Images,
+    16→    16→    16→  ArrowLeft,
+    17→    17→    17→} from "lucide-react";
+    18→    18→    18→
+    19→    19→    19→/**
+    20→    20→    20→ * /admin/social-images — manage AI-generated social share images for every
+    21→    21→    21→ * article + atlas pattern + guide.
+    22→    22→    22→ *
+    23→    23→    23→ * Glassmorphism admin layout:
+    24→    24→    24→ *   - dark bg #050505, gold accent #c9a96e
+    25→    25→    25→ *   - sticky header with back-link + label
+    26→    26→    26→ *   - toolbar with "Generate all missing" button
+    27→    27→    27→ *   - filter chips (all / generated / missing / articles / atlas / guides)
+    28→    28→    28→ *   - responsive grid of cards — each card shows the image preview (or a
+    29→    29→    29→ *     placeholder if not yet generated), title, status, and a per-row
+    30→    30→    30→ *     generate/regenerate button
+    31→    31→    31→ *
+    32→    32→    32→ * Endpoints used:
+    33→    33→    33→ *   GET  /api/admin/social-images              — list + status
+    34→    34→    34→ *   POST /api/ai/social-image                  — per-slug generate (force=false → skip)
+    35→    35→    35→ *                                                 with force=true → regenerate
+    36→    36→    36→ *   POST /api/ai/social-image/generate-all     — bulk generate missing
+    37→    37→    37→ */
+    38→    38→    38→
+    39→    39→    39→type Kind = "article" | "atlas" | "guide";
+    40→    40→    40→
+    41→    41→    41→interface Item {
+    42→    42→    42→  slug: string;
+    43→    43→    43→  title: string;
+    44→    44→    44→  kind: Kind;
+    45→    45→    45→  cluster?: string;
+    46→    46→    46→  category: string;
+    47→    47→    47→  status: "generated" | "missing";
+    48→    48→    48→  imageUrl?: string;
+    49→    49→    49→  prompt?: string;
+    50→    50→    50→  createdAt?: string;
+    51→    51→    51→}
+    52→    52→    52→
+    53→    53→    53→interface Summary {
+    54→    54→    54→  total: number;
+    55→    55→    55→  generated: number;
+    56→    56→    56→  missing: number;
+    57→    57→    57→  byKind: {
+    58→    58→    58→    article: { total: number; generated: number };
+    59→    59→    59→    atlas: { total: number; generated: number };
+    60→    60→    60→    guide: { total: number; generated: number };
+    61→    61→    61→  };
+    62→    62→    62→}
+    63→    63→    63→
+    64→    64→    64→interface ListResponse {
+    65→    65→    65→  items: Item[];
+    66→    66→    66→  summary: Summary;
+    67→    67→    67→}
+    68→    68→    68→
+    69→    69→    69→type Filter = "all" | "generated" | "missing" | "articles" | "atlas" | "guides";
+    70→    70→    70→
+    71→    71→    71→function formatDate(iso?: string): string {
+    72→    72→    72→  if (!iso) return "—";
+    73→    73→    73→  try {
+    74→    74→    74→    return new Date(iso).toLocaleString(undefined, {
+    75→    75→    75→      year: "numeric",
+    76→    76→    76→      month: "short",
+    77→    77→    77→      day: "numeric",
+    78→    78→    78→      hour: "2-digit",
+    79→    79→    79→      minute: "2-digit",
+    80→    80→    80→    });
+    81→    81→    81→  } catch {
+    82→    82→    82→    return iso;
+    83→    83→    83→  }
+    84→    84→    84→}
+    85→    85→    85→
+    86→    86→    86→function articleHref(item: Item): string {
+    87→    87→    87→  if (item.kind === "guide") return `/guides/${item.slug}`;
+    88→    88→    88→  if (item.kind === "atlas") return `/patterns/atlas/${item.slug}`;
+    89→    89→    89→  return `/insights/${item.slug}`;
+    90→    90→    90→}
+    91→    91→    91→
+    92→    92→    92→export default function SocialImagesAdmin() {
+    93→    93→    93→  const [items, setItems] = useState<Item[]>([]);
+    94→    94→    94→  const [summary, setSummary] = useState<Summary>({
+    95→    95→    95→    total: 0,
+    96→    96→    96→    generated: 0,
+    97→    97→    97→    missing: 0,
+    98→    98→    98→    byKind: {
+    99→    99→    99→      article: { total: 0, generated: 0 },
+   100→   100→   100→      atlas: { total: 0, generated: 0 },
+   101→   101→   101→      guide: { total: 0, generated: 0 },
+   102→   102→   102→    },
+   103→   103→   103→  });
+   104→   104→   104→  const [loading, setLoading] = useState(false);
+   105→   105→   105→  const [busySlug, setBusySlug] = useState<string | null>(null);
+   106→   106→   106→  const [batchRunning, setBatchRunning] = useState(false);
+   107→   107→   107→  const [batchResult, setBatchResult] = useState<string | null>(null);
+   108→   108→   108→  const [error, setError] = useState<string | null>(null);
+   109→   109→   109→  const [filter, setFilter] = useState<Filter>("all");
+   110→   110→   110→  const [previewSlug, setPreviewSlug] = useState<string | null>(null);
+   111→   111→   111→
+   112→   112→   112→  const load = useCallback(async () => {
+   113→   113→   113→    setLoading(true);
+   114→   114→   114→    setError(null);
+   115→   115→   115→    try {
+   116→   116→   116→      const res = await fetch("/api/admin/social-images");
+   117→   117→   117→      if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+   118→   118→   118→      const data = (await res.json()) as ListResponse;
+   119→   119→   119→      setItems(data.items);
+   120→   120→   120→      setSummary(data.summary);
+   121→   121→   121→    } catch (err) {
+   122→   122→   122→      setError(err instanceof Error ? err.message : "Load failed");
+   123→   123→   123→    } finally {
+   124→   124→   124→      setLoading(false);
+   125→   125→   125→    }
+   126→   126→   126→  }, []);
+   127→   127→   127→
+   128→   128→   128→  useEffect(() => {
+   129→   129→   129→    void load();
+   130→   130→   130→  }, [load]);
+   131→   131→   131→
+   132→   132→   132→  // ─── Per-slug generate ─────────────────────────────────────────────
+   133→   133→   133→  const generateSlug = useCallback(
+   134→   134→   134→    async (item: Item, force: boolean) => {
+   135→   135→   135→      setBusySlug(item.slug);
+   136→   136→   136→      setError(null);
+   137→   137→   137→      try {
+   138→   138→   138→        const res = await fetch("/api/ai/social-image", {
+   139→   139→   139→          method: "POST",
+   140→   140→   140→          headers: { "Content-Type": "application/json" },
+   141→   141→   141→          body: JSON.stringify({
+   142→   142→   142→            slug: item.slug,
+   143→   143→   143→            type: item.kind,
+   144→   144→   144→            force,
+   145→   145→   145→          }),
+   146→   146→   146→        });
+   147→   147→   147→        const data = await res.json();
+   148→   148→   148→        if (!res.ok) {
+   149→   149→   149→          throw new Error(
+   150→   150→   150→            data.error || data.message || `Failed (${res.status})`
+   151→   151→   151→          );
+   152→   152→   152→        }
+   153→   153→   153→        if (data.skipped) {
+   154→   154→   154→          setError(
+   155→   155→   155→            `"${item.title}" already has a social image — click "Regenerate" to overwrite.`
+   156→   156→   156→          );
+   157→   157→   157→        } else {
+   158→   158→   158→          // Refresh list so the card reflects new state.
+   159→   159→   159→          await load();
+   160→   160→   160→        }
+   161→   161→   161→      } catch (err) {
+   162→   162→   162→        setError(err instanceof Error ? err.message : "Generation failed");
+   163→   163→   163→      } finally {
+   164→   164→   164→        setBusySlug(null);
+   165→   165→   165→      }
+   166→   166→   166→    },
+   167→   167→   167→    [load]
+   168→   168→   168→  );
+   169→   169→   169→
+   170→   170→   170→  // ─── Bulk generate ─────────────────────────────────────────────────
+   171→   171→   171→  const generateAll = useCallback(async () => {
+   172→   172→   172→    if (summary.missing === 0) {
+   173→   173→   173→      setError(
+   174→   174→   174→        "Nothing missing — all articles, atlas patterns, and guides already have social images."
+   175→   175→   175→      );
+   176→   176→   176→      return;
+   177→   177→   177→    }
+   178→   178→   178→    if (
+   179→   179→   179→      !confirm(
+   180→   180→   180→        `Generate ${summary.missing} missing social image${
+   181→   181→   181→          summary.missing === 1 ? "" : "s"
+   182→   182→   182→        }?\n\nThis runs sequentially and can take 10–25 minutes. Leave this tab open.`
+   183→   183→   183→      )
+   184→   184→   184→    ) {
+   185→   185→   185→      return;
+   186→   186→   186→    }
+   187→   187→   187→    setBatchRunning(true);
+   188→   188→   188→    setError(null);
+   189→   189→   189→    setBatchResult(null);
+   190→   190→   190→    try {
+   191→   191→   191→      const res = await fetch("/api/ai/social-image/generate-all", {
+   192→   192→   192→        method: "POST",
+   193→   193→   193→        headers: { "Content-Type": "application/json" },
+   194→   194→   194→        body: JSON.stringify({}),
+   195→   195→   195→      });
+   196→   196→   196→      const data = await res.json();
+   197→   197→   197→      if (!res.ok) {
+   198→   198→   198→        throw new Error(
+   199→   199→   199→          data.error || `Bulk generation failed (${res.status})`
+   200→   200→   200→        );
+   201→   201→   201→      }
+   202→   202→   202→      const s = data.summary;
+   203→   203→   203→      setBatchResult(
+   204→   204→   204→        `Generated ${s.generated} / ${s.processed}. Failed: ${s.failed}. Skipped: ${s.skipped}.`
+   205→   205→   205→      );
+   206→   206→   206→      await load();
+   207→   207→   207→    } catch (err) {
+   208→   208→   208→      setError(err instanceof Error ? err.message : "Bulk generation failed");
+   209→   209→   209→    } finally {
+   210→   210→   210→      setBatchRunning(false);
+   211→   211→   211→    }
+   212→   212→   212→  }, [summary.missing, load]);
+   213→   213→   213→
+   214→   214→   214→  // ─── Filtering ─────────────────────────────────────────────────────
+   215→   215→   215→  const visibleItems = (() => {
+   216→   216→   216→    let list = items.slice();
+   217→   217→   217→    if (filter === "articles") list = list.filter((i) => i.kind === "article");
+   218→   218→   218→    if (filter === "atlas") list = list.filter((i) => i.kind === "atlas");
+   219→   219→   219→    if (filter === "guides") list = list.filter((i) => i.kind === "guide");
+   220→   220→   220→    if (filter === "missing") list = list.filter((i) => i.status === "missing");
+   221→   221→   221→    if (filter === "generated")
+   222→   222→   222→      list = list.filter((i) => i.status === "generated");
+   223→   223→   223→    return list;
+   224→   224→   224→  })();
+   225→   225→   225→
+   226→   226→   226→  const previewItem = previewSlug
+   227→   227→   227→    ? items.find((i) => i.slug === previewSlug)
+   228→   228→   228→    : null;
+   229→   229→   229→
+   230→   230→   230→  return (
+   231→   231→   231→    <>
+   232→   232→   232→      <div className="min-h-screen bg-[#050505] text-[#f0eee9] flex flex-col">
+   233→   233→   233→        {/* ─── Header ──────────────────────────────────────────────── */}
+   234→   234→   234→        <header className="sticky top-0 z-40 bg-[#050505]/85 backdrop-blur-xl border-b border-white/[0.04]">
+   235→   235→   235→          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+   236→   236→   236→            <div className="flex items-center justify-between h-16 sm:h-20">
+   237→   237→   237→              <Link
+   238→   238→   238→                href="/admin"
+   239→   239→   239→                className="text-[11px] tracking-[0.3em] uppercase text-[#7a7a7a] hover:text-[#c9a96e] transition-colors flex items-center gap-2"
+   240→   240→   240→              >
+   241→   241→   241→                <ArrowLeft className="size-3.5" />
+   242→   242→   242→                Back to /admin
+   243→   243→   243→              </Link>
+   244→   244→   244→              <div className="flex items-center gap-3">
+   245→   245→   245→                <div className="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.3em] uppercase text-[#c9a96e]">
+   246→   246→   246→                  <Images className="size-3.5" />
+   247→   247→   247→                  <span>Social Images</span>
+   248→   248→   248→                </div>
+   249→   249→   249→              </div>
+   250→   250→   250→            </div>
+   251→   251→   251→          </div>
+   252→   252→   252→        </header>
+   253→   253→   253→
+   254→   254→   254→        {/* ─── Main ───────────────────────────────────────────────── */}
+   255→   255→   255→        <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-10 sm:py-14 flex-1">
+   256→   256→   256→          {/* Title block */}
+   257→   257→   257→          <div className="mb-12 sm:mb-16">
+   258→   258→   258→            <div className="w-12 h-px bg-[#c9a96e]/40 mb-6" />
+   259→   259→   259→            <p className="text-[10px] tracking-[0.4em] uppercase text-[#c9a96e] mb-4 font-light">
+   260→   260→   260→              Admin · Social Images
+   261→   261→   261→            </p>
+   262→   262→   262→            <h1 className="text-editorial text-3xl sm:text-5xl text-[#f0eee9] tracking-[-0.02em] mb-4">
+   263→   263→   263→              Social Share Images
+   264→   264→   264→            </h1>
+   265→   265→   265→            <p className="text-body-cinematic text-sm sm:text-base text-[#9a9a9a] max-w-2xl leading-relaxed">
+   266→   266→   266→              AI-generated OG cards in the AstroKalki aesthetic.{" "}
+   267→   267→   267→              {summary.generated} of {summary.total} ready · {summary.missing}{" "}
+   268→   268→   268→              pending.
+   269→   269→   269→            </p>
+   270→   270→   270→          </div>
+   271→   271→   271→
+   272→   272→   272→          {/* Toolbar */}
+   273→   273→   273→          <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-6 p-4 border border-white/[0.04] bg-[#0a0a0a]">
+   274→   274→   274→            <div className="flex items-center gap-3">
+   275→   275→   275→              <Sparkles className="size-4 text-[#c9a96e]/70" />
+   276→   276→   276→              <p className="text-[11px] tracking-[0.2em] uppercase text-[#7a7a7a] font-light">
+   277→   277→   277→                One card per article · atlas pattern · guide · 1344 × 768 ·
+   278→   278→   278→                AstroKalki cinematic aesthetic
+   279→   279→   279→              </p>
+   280→   280→   280→            </div>
+   281→   281→   281→
+   282→   282→   282→            <div className="flex-1" />
+   283→   283→   283→
+   284→   284→   284→            {/* Generate all missing */}
+   285→   285→   285→            <button
+   286→   286→   286→              onClick={generateAll}
+   287→   287→   287→              disabled={batchRunning || summary.missing === 0}
+   288→   288→   288→              className="inline-flex items-center gap-2 text-[11px] tracking-[0.3em] uppercase text-[#050505] bg-[#c9a96e] hover:bg-[#d4b879] px-4 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+   289→   289→   289→            >
+   290→   290→   290→              {batchRunning ? (
+   291→   291→   291→                <Loader2 className="size-3.5 animate-spin" />
+   292→   292→   292→              ) : (
+   293→   293→   293→                <Play className="size-3.5" fill="currentColor" />
+   294→   294→   294→              )}
+   295→   295→   295→              {batchRunning
+   296→   296→   296→                ? "Generating…"
+   297→   297→   297→                : `Generate all missing (${summary.missing})`}
+   298→   298→   298→            </button>
+   299→   299→   299→          </div>
+   300→   300→   300→
+   301→   301→   301→          {/* Status / error messages */}
+   302→   302→   302→          {batchResult && (
+   303→   303→   303→            <div className="mb-4 p-3 border border-[#c9a96e]/30 bg-[#c9a96e]/[0.04] flex items-start gap-3">
+   304→   304→   304→              <CheckCircle2 className="size-4 text-[#c9a96e] mt-0.5 shrink-0" />
+   305→   305→   305→              <p className="text-sm text-[#cfcabf] font-light">{batchResult}</p>
+   306→   306→   306→            </div>
+   307→   307→   307→          )}
+   308→   308→   308→          {error && (
+   309→   309→   309→            <div className="mb-4 p-3 border border-red-400/30 bg-red-400/[0.04] flex items-start gap-3">
+   310→   310→   310→              <AlertCircle className="size-4 text-red-400 mt-0.5 shrink-0" />
+   311→   311→   311→              <p className="text-sm text-red-300/90 font-light">{error}</p>
+   312→   312→   312→            </div>
+   313→   313→   313→          )}
+   314→   314→   314→
+   315→   315→   315→          {/* Per-kind summary chips */}
+   316→   316→   316→          <div className="grid grid-cols-3 gap-2 mb-6">
+   317→   317→   317→            {(
+   318→   318→   318→              [
+   319→   319→   319→                {
+   320→   320→   320→                  id: "article",
+   321→   321→   321→                  label: "Articles",
+   322→   322→   322→                  total: summary.byKind.article.total,
+   323→   323→   323→                  generated: summary.byKind.article.generated,
+   324→   324→   324→                },
+   325→   325→   325→                {
+   326→   326→   326→                  id: "atlas",
+   327→   327→   327→                  label: "Atlas Patterns",
+   328→   328→   328→                  total: summary.byKind.atlas.total,
+   329→   329→   329→                  generated: summary.byKind.atlas.generated,
+   330→   330→   330→                },
+   331→   331→   331→                {
+   332→   332→   332→                  id: "guide",
+   333→   333→   333→                  label: "Guides",
+   334→   334→   334→                  total: summary.byKind.guide.total,
+   335→   335→   335→                  generated: summary.byKind.guide.generated,
+   336→   336→   336→                },
+   337→   337→   337→              ] as const
+   338→   338→   338→            ).map((k) => (
+   339→   339→   339→              <div
+   340→   340→   340→                key={k.id}
+   341→   341→   341→                className="border border-white/[0.04] bg-[#0a0a0a] p-3 text-center"
+   342→   342→   342→              >
+   343→   343→   343→                <p className="text-[10px] tracking-[0.25em] uppercase text-[#7a7a7a] font-light mb-1">
+   344→   344→   344→                  {k.label}
+   345→   345→   345→                </p>
+   346→   346→   346→                <p className="text-lg font-serif text-[#f0eee9] font-light">
+   347→   347→   347→                  {k.generated}
+   348→   348→   348→                  <span className="text-[#5a5a5a] text-sm"> / {k.total}</span>
+   349→   349→   349→                </p>
+   350→   350→   350→              </div>
+   351→   351→   351→            ))}
+   352→   352→   352→          </div>
+   353→   353→   353→
+   354→   354→   354→          {/* Filters */}
+   355→   355→   355→          <div className="flex flex-wrap gap-2 mb-6">
+   356→   356→   356→            {(
+   357→   357→   357→              [
+   358→   358→   358→                { id: "all", label: "All", count: summary.total },
+   359→   359→   359→                { id: "generated", label: "Generated", count: summary.generated },
+   360→   360→   360→                { id: "missing", label: "Missing", count: summary.missing },
+   361→   361→   361→                {
+   362→   362→   362→                  id: "articles",
+   363→   363→   363→                  label: "Articles",
+   364→   364→   364→                  count: summary.byKind.article.total,
+   365→   365→   365→                },
+   366→   366→   366→                {
+   367→   367→   367→                  id: "atlas",
+   368→   368→   368→                  label: "Atlas",
+   369→   369→   369→                  count: summary.byKind.atlas.total,
+   370→   370→   370→                },
+   371→   371→   371→                {
+   372→   372→   372→                  id: "guides",
+   373→   373→   373→                  label: "Guides",
+   374→   374→   374→                  count: summary.byKind.guide.total,
+   375→   375→   375→                },
+   376→   376→   376→              ] as const
+   377→   377→   377→            ).map((f) => (
+   378→   378→   378→              <button
+   379→   379→   379→                key={f.id}
+   380→   380→   380→                onClick={() => setFilter(f.id)}
+   381→   381→   381→                className={`px-3 py-1.5 text-[10px] tracking-[0.25em] uppercase font-light transition-colors border ${
+   382→   382→   382→                  filter === f.id
+   383→   383→   383→                    ? "border-[#c9a96e]/60 text-[#c9a96e] bg-[#c9a96e]/[0.05]"
+   384→   384→   384→                    : "border-white/[0.06] text-[#7a7a7a] hover:text-[#f0eee9] hover:border-white/[0.12]"
+   385→   385→   385→                }`}
+   386→   386→   386→              >
+   387→   387→   387→                {f.label}{" "}
+   388→   388→   388→                <span className="ml-1 text-[#5a5a5a]">({f.count})</span>
+   389→   389→   389→              </button>
+   390→   390→   390→            ))}
+   391→   391→   391→          </div>
+   392→   392→   392→
+   393→   393→   393→          {/* Card grid */}
+   394→   394→   394→          {loading && items.length === 0 ? (
+   395→   395→   395→            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+   396→   396→   396→              {[...Array(6)].map((_, i) => (
+   397→   397→   397→                <div
+   398→   398→   398→                  key={i}
+   399→   399→   399→                  className="border border-white/[0.04] bg-[#0a0a0a] p-3 animate-pulse"
+   400→   400→   400→                >
+   401→   401→   401→                  <div className="aspect-[1344/768] bg-[#141414] mb-3" />
+   402→   402→   402→                  <div className="h-3 w-2/3 bg-[#141414] mb-2" />
+   403→   403→   403→                  <div className="h-3 w-1/3 bg-[#141414]" />
+   404→   404→   404→                </div>
+   405→   405→   405→              ))}
+   406→   406→   406→            </div>
+   407→   407→   407→          ) : (
+   408→   408→   408→            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+   409→   409→   409→              {visibleItems.map((item) => {
+   410→   410→   410→                const href = articleHref(item);
+   411→   411→   411→                return (
+   412→   412→   412→                  <article
+   413→   413→   413→                    key={`${item.kind}-${item.slug}`}
+   414→   414→   414→                    className="border border-white/[0.04] bg-[#0a0a0a] p-3 flex flex-col hover:border-[#c9a96e]/20 transition-colors"
+   415→   415→   415→                  >
+   416→   416→   416→                    {/* Image preview / placeholder */}
+   417→   417→   417→                    <div className="relative aspect-[1344/768] bg-[#050505] border border-[#c9a96e]/20 mb-3 overflow-hidden group">
+   418→   418→   418→                      {item.status === "generated" && item.imageUrl ? (
+   419→   419→   419→                        <img
+   420→   420→   420→                          src={`${item.imageUrl}?t=${item.createdAt ? Date.parse(item.createdAt) : 0}`}
+   421→   421→   421→                          alt={`Social share image for ${item.title}`}
+   422→   422→   422→                          loading="lazy"
+   423→   423→   423→                          className="w-full h-full object-cover cursor-zoom-in"
+   424→   424→   424→                          onClick={() => setPreviewSlug(item.slug)}
+   425→   425→   425→                        />
+   426→   426→   426→                      ) : (
+   427→   427→   427→                        <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-[#3a3a3a]">
+   428→   428→   428→                          <ImageIcon className="size-8" />
+   429→   429→   429→                          <span className="text-[10px] tracking-[0.3em] uppercase">
+   430→   430→   430→                            Not generated
+   431→   431→   431→                          </span>
+   432→   432→   432→                        </div>
+   433→   433→   433→                      )}
+   434→   434→   434→
+   435→   435→   435→                      {/* Top-left status badge */}
+   436→   436→   436→                      <div className="absolute top-2 left-2">
+   437→   437→   437→                        {item.status === "generated" ? (
+   438→   438→   438→                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#050505]/80 backdrop-blur-sm text-[9px] tracking-[0.2em] uppercase text-emerald-400/90 border border-emerald-400/20">
+   439→   439→   439→                            <CheckCircle2 className="size-2.5" />
+   440→   440→   440→                            Ready
+   441→   441→   441→                          </span>
+   442→   442→   442→                        ) : (
+   443→   443→   443→                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#050505]/80 backdrop-blur-sm text-[9px] tracking-[0.2em] uppercase text-yellow-400/80 border border-yellow-400/20">
+   444→   444→   444→                            <AlertCircle className="size-2.5" />
+   445→   445→   445→                            Missing
+   446→   446→   446→                          </span>
+   447→   447→   447→                        )}
+   448→   448→   448→                      </div>
+   449→   449→   449→
+   450→   450→   450→                      {/* Top-right kind badge */}
+   451→   451→   451→                      <div className="absolute top-2 right-2">
+   452→   452→   452→                        <span
+   453→   453→   453→                          className={`px-1.5 py-0.5 bg-[#050505]/80 backdrop-blur-sm text-[9px] tracking-[0.2em] uppercase border ${
+   454→   454→   454→                            item.kind === "guide"
+   455→   455→   455→                              ? "text-[#c9a96e]/80 border-[#c9a96e]/20"
+   456→   456→   456→                              : item.kind === "atlas"
+   457→   457→   457→                                ? "text-[#d4b879]/80 border-[#d4b879]/20"
+   458→   458→   458→                                : "text-[#7a7a7a] border-white/[0.06]"
+   459→   459→   459→                          }`}
+   460→   460→   460→                        >
+   461→   461→   461→                          {item.kind}
+   462→   462→   462→                        </span>
+   463→   463→   463→                      </div>
+   464→   464→   464→                    </div>
+   465→   465→   465→
+   466→   466→   466→                    {/* Title + cluster */}
+   467→   467→   467→                    <div className="flex-1 mb-3">
+   468→   468→   468→                      <a
+   469→   469→   469→                        href={href}
+   470→   470→   470→                        target="_blank"
+   471→   471→   471→                        rel="noopener noreferrer"
+   472→   472→   472→                        className="text-[#f0eee9] text-sm font-light hover:text-[#c9a96e] transition-colors line-clamp-2 leading-snug"
+   473→   473→   473→                        title={item.title}
+   474→   474→   474→                      >
+   475→   475→   475→                        {item.title}
+   476→   476→   476→                      </a>
+   477→   477→   477→                      <p className="text-[10px] text-[#5a5a5a] mt-1.5 font-light tracking-wider">
+   478→   478→   478→                        {item.cluster || item.kind} ·{" "}
+   479→   479→   479→                        <span className="font-mono">{item.slug}</span>
+   480→   480→   480→                      </p>
+   481→   481→   481→                      {item.createdAt && (
+   482→   482→   482→                        <p className="text-[10px] text-[#5a5a5a] mt-0.5 font-light">
+   483→   483→   483→                          {formatDate(item.createdAt)}
+   484→   484→   484→                        </p>
+   485→   485→   485→                      )}
+   486→   486→   486→                    </div>
+   487→   487→   487→
+   488→   488→   488→                    {/* Actions */}
+   489→   489→   489→                    <div className="flex items-center gap-2">
+   490→   490→   490→                      {item.status === "generated" ? (
+   491→   491→   491→                        <>
+   492→   492→   492→                          <button
+   493→   493→   493→                            onClick={() => setPreviewSlug(item.slug)}
+   494→   494→   494→                            className="inline-flex items-center gap-1 text-[10px] tracking-[0.25em] uppercase text-[#7a7a7a] hover:text-[#c9a96e] transition-colors px-2 py-1.5 border border-white/[0.06] hover:border-[#c9a96e]/30"
+   495→   495→   495→                            title="Preview image + prompt"
+   496→   496→   496→                          >
+   497→   497→   497→                            <ExternalLink className="size-3" />
+   498→   498→   498→                            Preview
+   499→   499→   499→                          </button>
+   500→   500→   500→                          <button
+   501→   501→   501→                            onClick={() => generateSlug(item, true)}
+   502→   502→   502→                            disabled={busySlug === item.slug || batchRunning}
+   503→   503→   503→                            className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.25em] uppercase text-[#c9a96e] border border-[#c9a96e]/40 px-2.5 py-1.5 hover:bg-[#c9a96e]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+   504→   504→   504→                            title="Regenerate (overwrite)"
+   505→   505→   505→                          >
+   506→   506→   506→                            {busySlug === item.slug ? (
+   507→   507→   507→                              <Loader2 className="size-3 animate-spin" />
+   508→   508→   508→                            ) : (
+   509→   509→   509→                              <RotateCcw className="size-3" />
+   510→   510→   510→                            )}
+   511→   511→   511→                            Regenerate
+   512→   512→   512→                          </button>
+   513→   513→   513→                        </>
+   514→   514→   514→                      ) : (
+   515→   515→   515→                        <button
+   516→   516→   516→                          onClick={() => generateSlug(item, false)}
+   517→   517→   517→                          disabled={busySlug === item.slug || batchRunning}
+   518→   518→   518→                          className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.25em] uppercase text-[#c9a96e] border border-[#c9a96e]/40 px-2.5 py-1.5 hover:bg-[#c9a96e]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+   519→   519→   519→                          title="Generate social image"
+   520→   520→   520→                        >
+   521→   521→   521→                          {busySlug === item.slug ? (
+   522→   522→   522→                            <Loader2 className="size-3 animate-spin" />
+   523→   523→   523→                          ) : (
+   524→   524→   524→                            <Play className="size-3" fill="currentColor" />
+   525→   525→   525→                          )}
+   526→   526→   526→                          Generate
+   527→   527→   527→                        </button>
+   528→   528→   528→                      )}
+   529→   529→   529→                    </div>
+   530→   530→   530→                  </article>
+   531→   531→   531→                );
+   532→   532→   532→              })}
+   533→   533→   533→            </div>
+   534→   534→   534→          )}
+   535→   535→   535→
+   536→   536→   536→          {visibleItems.length === 0 && !loading && (
+   537→   537→   537→            <div className="border border-white/[0.04] p-12 text-center text-[#5a5a5a] font-light">
+   538→   538→   538→              No items match the current filter.
+   539→   539→   539→            </div>
+   540→   540→   540→          )}
+   541→   541→   541→
+   542→   542→   542→          {/* Footer note */}
+   543→   543→   543→          <p className="mt-6 text-[11px] text-[#5a5a5a] font-light leading-relaxed max-w-3xl">
+   544→   544→   544→            Image generation is rate-limited to 5 per hour per admin
+   545→   545→   545→            (single-card endpoint) and 1 batch per 10 minutes (bulk endpoint).
+   546→   546→   546→            Generation runs sequentially and can take 15–30 seconds per card.
+   547→   547→   547→            Images are stored in{" "}
+   548→   548→   548→            <code className="text-[#7a7a7a] font-mono">
+   549→   549→   549→              public/social-images/&lt;slug&gt;.png
+   550→   550→   550→            </code>{" "}
+   551→   551→   551→            and served at{" "}
+   552→   552→   552→            <code className="text-[#7a7a7a] font-mono">
+   553→   553→   553→              /api/ai/social-image/&lt;slug&gt;
+   554→   554→   554→            </code>{" "}
+   555→   555→   555→            (which falls back to{" "}
+   556→   556→   556→            <code className="text-[#7a7a7a] font-mono">/api/og</code> if no card
+   557→   557→   557→            has been generated yet).
+   558→   558→   558→          </p>
+   559→   559→   559→        </main>
+   560→   560→   560→
+   561→   561→   561→        {/* ─── Footer ──────────────────────────────────────────────── */}
+   562→   562→   562→        <footer className="mt-auto border-t border-white/[0.04] bg-[#050505]">
+   563→   563→   563→          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+   564→   564→   564→            <p className="text-body-cinematic text-[11px] text-[#5a5a5a] tracking-[0.15em] uppercase">
+   565→   565→   565→              AstroKalki · Social Images
+   566→   566→   566→            </p>
+   567→   567→   567→            <Link
+   568→   568→   568→              href="/admin"
+   569→   569→   569→              className="text-[11px] tracking-[0.3em] uppercase text-[#7a7a7a] hover:text-[#c9a96e] transition-colors flex items-center gap-1.5"
+   570→   570→   570→            >
+   571→   571→   571→              <ArrowLeft className="size-3" />
+   572→   572→   572→              Back to admin
+   573→   573→   573→            </Link>
+   574→   574→   574→          </div>
+   575→   575→   575→        </footer>
+   576→   576→   576→      </div>
+   577→   577→   577→
+   578→   578→   578→      {/* ─── Preview modal (outside flex-col wrapper) ─────────────── */}
+   579→   579→   579→      {previewItem && (
+   580→   580→   580→        <div
+   581→   581→   581→          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6"
+   582→   582→   582→          onClick={() => setPreviewSlug(null)}
+   583→   583→   583→        >
+   584→   584→   584→          <div
+   585→   585→   585→            className="max-w-4xl w-full bg-[#0a0a0a] border border-[#c9a96e]/20 p-6 max-h-[90vh] overflow-y-auto"
+   586→   586→   586→            onClick={(e) => e.stopPropagation()}
+   587→   587→   587→          >
+   588→   588→   588→            <div className="flex items-start justify-between mb-4 gap-4">
+   589→   589→   589→              <div className="min-w-0">
+   590→   590→   590→                <p className="text-[10px] tracking-[0.3em] uppercase text-[#c9a96e] mb-1">
+   591→   591→   591→                  {previewItem.kind} ·{" "}
+   592→   592→   592→                  {previewItem.cluster || previewItem.kind}
+   593→   593→   593→                </p>
+   594→   594→   594→                <h2 className="text-xl font-serif font-light text-[#f0eee9] truncate">
+   595→   595→   595→                  {previewItem.title}
+   596→   596→   596→                </h2>
+   597→   597→   597→                <p className="text-[10px] text-[#5a5a5a] mt-1 font-mono">
+   598→   598→   598→                  {previewItem.slug}
+   599→   599→   599→                </p>
+   600→   600→   600→              </div>
+   601→   601→   601→              <button
+   602→   602→   602→                onClick={() => setPreviewSlug(null)}
+   603→   603→   603→                className="text-[#7a7a7a] hover:text-[#c9a96e] transition-colors text-sm tracking-[0.2em] uppercase shrink-0"
+   604→   604→   604→              >
+   605→   605→   605→                Close ✕
+   606→   606→   606→              </button>
+   607→   607→   607→            </div>
+   608→   608→   608→
+   609→   609→   609→            {previewItem.imageUrl && (
+   610→   610→   610→              <div className="border border-[#c9a96e]/20 mb-4">
+   611→   611→   611→                <img
+   612→   612→   612→                  src={previewItem.imageUrl}
+   613→   613→   613→                  alt={`Social share image for ${previewItem.title}`}
+   614→   614→   614→                  className="w-full h-auto"
+   615→   615→   615→                />
+   616→   616→   616→              </div>
+   617→   617→   617→            )}
+   618→   618→   618→
+   619→   619→   619→            {previewItem.prompt && (
+   620→   620→   620→              <div className="space-y-2">
+   621→   621→   621→                <p className="text-[10px] tracking-[0.3em] uppercase text-[#7a7a7a]">
+   622→   622→   622→                  Generation prompt
+   623→   623→   623→                </p>
+   624→   624→   624→                <p className="text-xs text-[#9a9a9a] font-light leading-relaxed bg-[#050505] border border-white/[0.04] p-3">
+   625→   625→   625→                  {previewItem.prompt}
+   626→   626→   626→                </p>
+   627→   627→   627→              </div>
+   628→   628→   628→            )}
+   629→   629→   629→
+   630→   630→   630→            {previewItem.imageUrl && (
+   631→   631→   631→              <div className="mt-4 flex items-center gap-3 flex-wrap">
+   632→   632→   632→                <a
+   633→   633→   633→                  href={previewItem.imageUrl}
+   634→   634→   634→                  target="_blank"
+   635→   635→   635→                  rel="noopener noreferrer"
+   636→   636→   636→                  className="text-[10px] tracking-[0.25em] uppercase text-[#c9a96e] border border-[#c9a96e]/40 px-3 py-1.5 hover:bg-[#c9a96e]/10 transition-colors inline-flex items-center gap-1.5"
+   637→   637→   637→                >
+   638→   638→   638→                  <ExternalLink className="size-3" />
+   639→   639→   639→                  Open raw PNG
+   640→   640→   640→                </a>
+   641→   641→   641→                <a
+   642→   642→   642→                  href={`/api/ai/social-image/${encodeURIComponent(previewItem.slug)}`}
+   643→   643→   643→                  target="_blank"
+   644→   644→   644→                  rel="noopener noreferrer"
+   645→   645→   645→                  className="text-[10px] tracking-[0.25em] uppercase text-[#c9a96e] border border-[#c9a96e]/40 px-3 py-1.5 hover:bg-[#c9a96e]/10 transition-colors inline-flex items-center gap-1.5"
+   646→   646→   646→                >
+   647→   647→   647→                  <ExternalLink className="size-3" />
+   648→   648→   648→                  Open via /api/ai/social-image
+   649→   649→   649→                </a>
+   650→   650→   650→                <a
+   651→   651→   651→                  href={`/api/og?slug=${encodeURIComponent(previewItem.slug)}`}
+   652→   652→   652→                  target="_blank"
+   653→   653→   653→                  rel="noopener noreferrer"
+   654→   654→   654→                  className="text-[10px] tracking-[0.25em] uppercase text-[#7a7a7a] border border-white/[0.06] hover:text-[#c9a96e] hover:border-[#c9a96e]/30 px-3 py-1.5 transition-colors inline-flex items-center gap-1.5"
+   655→   655→   655→                >
+   656→   656→   656→                  <ExternalLink className="size-3" />
+   657→   657→   657→                  Open via /api/og
+   658→   658→   658→                </a>
+   659→   659→   659→              </div>
+   660→   660→   660→            )}
+   661→   661→   661→          </div>
+   662→   662→   662→        </div>
+   663→   663→   663→      )}
+   664→   664→   664→    </>
+   665→   665→   665→  );
+   666→   666→   666→}
+   667→   667→   667→

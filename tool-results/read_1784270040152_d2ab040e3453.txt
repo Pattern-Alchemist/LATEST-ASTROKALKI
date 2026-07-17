@@ -1,0 +1,1711 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback } from "react";
+     4→     4→import Link from "next/link";
+     5→     5→import { motion, AnimatePresence } from "framer-motion";
+     6→     6→import {
+     7→     7→  Calendar,
+     8→     8→  Users,
+     9→     9→  DollarSign,
+    10→    10→  Mail,
+    11→    11→  Clock,
+    12→    12→  Copy,
+    13→    13→  Eye,
+    14→    14→  Star,
+    15→    15→  ChevronDown,
+    16→    16→  RefreshCw,
+    17→    17→  ArrowUpRight,
+    18→    18→  TrendingUp,
+    19→    19→  AlertCircle,
+    20→    20→  CheckCircle2,
+    21→    21→  XCircle,
+    22→    22→  Hourglass,
+    23→    23→  ExternalLink,
+    24→    24→  BarChart3,
+    25→    25→  Search,
+    26→    26→  Trash2,
+    27→    27→  Quote,
+    28→    28→  Disc3,
+    29→    29→  Radio,
+    30→    30→  Globe,
+    31→    31→  PenLine,
+    32→    32→  Images,
+    33→    33→  MapPin,
+    34→    34→  FileText,
+    35→    35→  Video,
+    36→    36→  RotateCcw,
+    37→    37→  Ban,
+    38→    38→  CreditCard,
+    39→    39→} from "lucide-react";
+    40→    40→
+    41→    41→import {
+    42→    42→  Card,
+    43→    43→  CardContent,
+    44→    44→  CardDescription,
+    45→    45→  CardHeader,
+    46→    46→  CardTitle,
+    47→    47→} from "@/components/ui/card";
+    48→    48→import { Button } from "@/components/ui/button";
+    49→    49→import { Badge } from "@/components/ui/badge";
+    50→    50→import {
+    51→    51→  Table,
+    52→    52→  TableBody,
+    53→    53→  TableCell,
+    54→    54→  TableHead,
+    55→    55→  TableHeader,
+    56→    56→  TableRow,
+    57→    57→} from "@/components/ui/table";
+    58→    58→import {
+    59→    59→  Select,
+    60→    60→  SelectContent,
+    61→    61→  SelectItem,
+    62→    62→  SelectTrigger,
+    63→    63→  SelectValue,
+    64→    64→} from "@/components/ui/select";
+    65→    65→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    66→    66→import { Skeleton } from "@/components/ui/skeleton";
+    67→    67→import { Input } from "@/components/ui/input";
+    68→    68→import AdminRoomsPanel from "@/components/admin/rooms-panel";
+    69→    69→import EmailAnalyticsPanel from "@/components/admin/email-analytics-panel";
+    70→    70→import FunnelDashboard from "@/components/admin/funnel-dashboard";
+    71→    71→
+    72→    72→// ─── Types ────────────────────────────────────────────────────────
+    73→    73→
+    74→    74→interface DashboardStats {
+    75→    75→  totalBookings: number;
+    76→    76→  pendingBookings: number;
+    77→    77→  confirmedBookings: number;
+    78→    78→  completedBookings: number;
+    79→    79→  cancelledBookings: number;
+    80→    80→  totalNewsletter: number;
+    81→    81→  totalMicroReadings: number;
+    82→    82→  totalReferrals: number;
+    83→    83→  totalMemberships: number;
+    84→    84→  totalTestimonials: number;
+    85→    85→  totalInsights: number;
+    86→    86→  totalRevenue: number;
+    87→    87→  recentBookings: number;
+    88→    88→  recentNewsletter: number;
+    89→    89→}
+    90→    90→
+    91→    91→interface Booking {
+    92→    92→  id: string;
+    93→    93→  name: string;
+    94→    94→  email: string;
+    95→    95→  phone: string | null;
+    96→    96→  duration: number;
+    97→    97→  price: string;
+    98→    98→  contexts: string;
+    99→    99→  birthDate: string | null;
+   100→   100→  birthTime: string | null;
+   101→   101→  birthPlace: string | null;
+   102→   102→  message: string | null;
+   103→   103→  status: string;
+   104→   104→  referredBy: string | null;
+   105→   105→  roomUrl: string | null;
+   106→   106→  roomName: string | null;
+   107→   107→  createdAt: string;
+   108→   108→  updatedAt: string;
+   109→   109→}
+   110→   110→
+   111→   111→interface NewsletterSub {
+   112→   112→  id: string;
+   113→   113→  email: string;
+   114→   114→  source: string | null;
+   115→   115→  createdAt: string;
+   116→   116→}
+   117→   117→
+   118→   118→interface MicroReadingLead {
+   119→   119→  id: string;
+   120→   120→  email: string;
+   121→   121→  birthMonth: number;
+   122→   122→  emotionalPattern: string;
+   123→   123→  relationshipFrustration: string;
+   124→   124→  resultHint: string;
+   125→   125→  createdAt: string;
+   126→   126→}
+   127→   127→
+   128→   128→// ─── Status Config ────────────────────────────────────────────────
+   129→   129→
+   130→   130→const STATUS_CONFIG: Record<
+   131→   131→  string,
+   132→   132→  { label: string; color: string; bgColor: string; borderColor: string; icon: React.ReactNode }
+   133→   133→> = {
+   134→   134→  pending: {
+   135→   135→    label: "Pending",
+   136→   136→    color: "text-yellow-400",
+   137→   137→    bgColor: "bg-yellow-400/10",
+   138→   138→    borderColor: "border-yellow-400/20",
+   139→   139→    icon: <Hourglass className="size-3" />,
+   140→   140→  },
+   141→   141→  confirmed: {
+   142→   142→    label: "Confirmed",
+   143→   143→    color: "text-[#c9a96e]",
+   144→   144→    bgColor: "bg-[#c9a96e]/10",
+   145→   145→    borderColor: "border-[#c9a96e]/20",
+   146→   146→    icon: <CheckCircle2 className="size-3" />,
+   147→   147→  },
+   148→   148→  completed: {
+   149→   149→    label: "Completed",
+   150→   150→    color: "text-emerald-400",
+   151→   151→    bgColor: "bg-emerald-400/10",
+   152→   152→    borderColor: "border-emerald-400/20",
+   153→   153→    icon: <CheckCircle2 className="size-3" />,
+   154→   154→  },
+   155→   155→  cancelled: {
+   156→   156→    label: "Cancelled",
+   157→   157→    color: "text-[#c0392b]",
+   158→   158→    bgColor: "bg-[#c0392b]/10",
+   159→   159→    borderColor: "border-[#c0392b]/20",
+   160→   160→    icon: <XCircle className="size-3" />,
+   161→   161→  },
+   162→   162→};
+   163→   163→
+   164→   164→const MONTH_NAMES = [
+   165→   165→  "January", "February", "March", "April", "May", "June",
+   166→   166→  "July", "August", "September", "October", "November", "December",
+   167→   167→];
+   168→   168→
+   169→   169→// ─── Helpers ──────────────────────────────────────────────────────
+   170→   170→
+   171→   171→function formatDate(dateStr: string) {
+   172→   172→  try {
+   173→   173→    return new Date(dateStr).toLocaleDateString("en-IN", {
+   174→   174→      day: "2-digit",
+   175→   175→      month: "short",
+   176→   176→      year: "numeric",
+   177→   177→    });
+   178→   178→  } catch {
+   179→   179→    return dateStr;
+   180→   180→  }
+   181→   181→}
+   182→   182→
+   183→   183→function formatDateTime(dateStr: string) {
+   184→   184→  try {
+   185→   185→    return new Date(dateStr).toLocaleString("en-IN", {
+   186→   186→      day: "2-digit",
+   187→   187→      month: "short",
+   188→   188→      year: "numeric",
+   189→   189→      hour: "2-digit",
+   190→   190→      minute: "2-digit",
+   191→   191→    });
+   192→   192→  } catch {
+   193→   193→    return dateStr;
+   194→   194→  }
+   195→   195→}
+   196→   196→
+   197→   197→function formatPrice(price: string) {
+   198→   198→  const num = parseFloat(price.replace(/[^0-9.]/g, ""));
+   199→   199→  if (isNaN(num)) return price;
+   200→   200→  return "₹" + num.toLocaleString("en-IN");
+   201→   201→}
+   202→   202→
+   203→   203→// ─── Stat Card Component ──────────────────────────────────────────
+   204→   204→
+   205→   205→function StatCard({
+   206→   206→  title,
+   207→   207→  value,
+   208→   208→  subtitle,
+   209→   209→  icon,
+   210→   210→  accent,
+   211→   211→  delay = 0,
+   212→   212→}: {
+   213→   213→  title: string;
+   214→   214→  value: string | number;
+   215→   215→  subtitle?: string;
+   216→   216→  icon: React.ReactNode;
+   217→   217→  accent: string;
+   218→   218→  delay?: number;
+   219→   219→}) {
+   220→   220→  return (
+   221→   221→    <motion.div
+   222→   222→      initial={{ opacity: 0, y: 20 }}
+   223→   223→      animate={{ opacity: 1, y: 0 }}
+   224→   224→      transition={{ duration: 0.5, delay, ease: [0.25, 0.46, 0.45, 0.94] }}
+   225→   225→    >
+   226→   226→      <Card className="card-depth bg-[#0a0a0a] border-white/[0.04] hover:border-white/[0.08] transition-all duration-500">
+   227→   227→        <CardContent className="p-6">
+   228→   228→          <div className="flex items-start justify-between">
+   229→   229→            <div className="space-y-2">
+   230→   230→              <p className="text-body-cinematic text-xs uppercase tracking-[0.2em]">
+   231→   231→                {title}
+   232→   232→              </p>
+   233→   233→              <p className="text-editorial text-2xl sm:text-3xl text-[#f0eee9]">
+   234→   234→                {value}
+   235→   235→              </p>
+   236→   236→              {subtitle && (
+   237→   237→                <p className="text-body-cinematic text-xs flex items-center gap-1">
+   238→   238→                  <TrendingUp className="size-3 text-emerald-400" />
+   239→   239→                  {subtitle}
+   240→   240→                </p>
+   241→   241→              )}
+   242→   242→            </div>
+   243→   243→            <div
+   244→   244→              className={`rounded-lg p-3 ${accent}`}
+   245→   245→            >
+   246→   246→              {icon}
+   247→   247→            </div>
+   248→   248→          </div>
+   249→   249→        </CardContent>
+   250→   250→      </Card>
+   251→   251→    </motion.div>
+   252→   252→  );
+   253→   253→}
+   254→   254→
+   255→   255→// ─── Status Badge ─────────────────────────────────────────────────
+   256→   256→
+   257→   257→function StatusBadge({ status }: { status: string }) {
+   258→   258→  const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+   259→   259→  return (
+   260→   260→    <Badge
+   261→   261→      variant="outline"
+   262→   262→      className={`${config.color} ${config.bgColor} ${config.borderColor} gap-1 text-xs font-medium`}
+   263→   263→    >
+   264→   264→      {config.icon}
+   265→   265→      {config.label}
+   266→   266→    </Badge>
+   267→   267→  );
+   268→   268→}
+   269→   269→
+   270→   270→// ─── Main Dashboard Component ─────────────────────────────────────
+   271→   271→
+   272→   272→export default function AdminDashboard() {
+   273→   273→  const [stats, setStats] = useState<DashboardStats | null>(null);
+   274→   274→  const [bookings, setBookings] = useState<Booking[]>([]);
+   275→   275→  const [subscribers, setSubscribers] = useState<NewsletterSub[]>([]);
+   276→   276→  const [microReadings, setMicroReadings] = useState<MicroReadingLead[]>([]);
+   277→   277→  const [loading, setLoading] = useState(true);
+   278→   278→  const [activeTab, setActiveTab] = useState("overview");
+   279→   279→  const [bookingFilter, setBookingFilter] = useState("all");
+   280→   280→  const [searchQuery, setSearchQuery] = useState("");
+   281→   281→  const [updatingId, setUpdatingId] = useState<string | null>(null);
+   282→   282→  const [refreshing, setRefreshing] = useState(false);
+   283→   283→  const [copiedRoomId, setCopiedRoomId] = useState<string | null>(null);
+   284→   284→
+   285→   285→  // ─── Data Fetching ────────────────────────────────────────────────
+   286→   286→
+   287→   287→  const fetchStats = useCallback(async () => {
+   288→   288→    try {
+   289→   289→      const res = await fetch("/api/admin/stats");
+   290→   290→      if (res.ok) {
+   291→   291→        const data = await res.json();
+   292→   292→        setStats(data);
+   293→   293→      }
+   294→   294→    } catch (err) {
+   295→   295→      console.error("Failed to fetch stats:", err);
+   296→   296→    }
+   297→   297→  }, []);
+   298→   298→
+   299→   299→  const fetchBookings = useCallback(async () => {
+   300→   300→    try {
+   301→   301→      const statusParam = bookingFilter !== "all" ? `?status=${bookingFilter}` : "";
+   302→   302→      const res = await fetch(`/api/bookings${statusParam}`);
+   303→   303→      if (res.ok) {
+   304→   304→        const data = await res.json();
+   305→   305→        setBookings(data.bookings || []);
+   306→   306→      }
+   307→   307→    } catch (err) {
+   308→   308→      console.error("Failed to fetch bookings:", err);
+   309→   309→    }
+   310→   310→  }, [bookingFilter]);
+   311→   311→
+   312→   312→  const fetchSubscribers = useCallback(async () => {
+   313→   313→    try {
+   314→   314→      const res = await fetch("/api/admin/newsletter");
+   315→   315→      if (res.ok) {
+   316→   316→        const data = await res.json();
+   317→   317→        setSubscribers(data.subscribers || []);
+   318→   318→      }
+   319→   319→    } catch (err) {
+   320→   320→      console.error("Failed to fetch subscribers:", err);
+   321→   321→    }
+   322→   322→  }, []);
+   323→   323→
+   324→   324→  const fetchMicroReadings = useCallback(async () => {
+   325→   325→    try {
+   326→   326→      const res = await fetch("/api/admin/micro-readings");
+   327→   327→      if (res.ok) {
+   328→   328→        const data = await res.json();
+   329→   329→        setMicroReadings(data.readings || []);
+   330→   330→      }
+   331→   331→    } catch (err) {
+   332→   332→      console.error("Failed to fetch micro-readings:", err);
+   333→   333→    }
+   334→   334→  }, []);
+   335→   335→
+   336→   336→  const loadAllData = useCallback(async () => {
+   337→   337→    setLoading(true);
+   338→   338→    await Promise.all([
+   339→   339→      fetchStats(),
+   340→   340→      fetchBookings(),
+   341→   341→      fetchSubscribers(),
+   342→   342→      fetchMicroReadings(),
+   343→   343→    ]);
+   344→   344→    setLoading(false);
+   345→   345→  }, [fetchStats, fetchBookings, fetchSubscribers, fetchMicroReadings]);
+   346→   346→
+   347→   347→  useEffect(() => {
+   348→   348→    loadAllData();
+   349→   349→  }, [loadAllData]);
+   350→   350→
+   351→   351→  // Re-fetch bookings when filter changes
+   352→   352→  useEffect(() => {
+   353→   353→    if (!loading) {
+   354→   354→      fetchBookings();
+   355→   355→    }
+   356→   356→  }, [bookingFilter, fetchBookings, loading]);
+   357→   357→
+   358→   358→  const handleRefresh = async () => {
+   359→   359→    setRefreshing(true);
+   360→   360→    await loadAllData();
+   361→   361→    setRefreshing(false);
+   362→   362→  };
+   363→   363→
+   364→   364→  // ─── Booking Status Update ──────────────────────────────────────
+   365→   365→
+   366→   366→  const updateBookingStatus = async (id: string, newStatus: string) => {
+   367→   367→    setUpdatingId(id);
+   368→   368→    try {
+   369→   369→      const res = await fetch(`/api/admin/bookings/${id}`, {
+   370→   370→        method: "PATCH",
+   371→   371→        headers: { "Content-Type": "application/json" },
+   372→   372→        body: JSON.stringify({ status: newStatus }),
+   373→   373→      });
+   374→   374→
+   375→   375→      if (res.ok) {
+   376→   376→        setBookings((prev) =>
+   377→   377→          prev.map((b) => (b.id === id ? { ...b, status: newStatus } : b))
+   378→   378→        );
+   379→   379→        // Update stats after status change
+   380→   380→        fetchStats();
+   381→   381→      }
+   382→   382→    } catch (err) {
+   383→   383→      console.error("Failed to update booking status:", err);
+   384→   384→    } finally {
+   385→   385→      setUpdatingId(null);
+   386→   386→    }
+   387→   387→  };
+   388→   388→
+   389→   389→  const deleteBooking = async (id: string) => {
+   390→   390→    if (!confirm("Are you sure you want to delete this booking?")) return;
+   391→   391→    try {
+   392→   392→      const res = await fetch(`/api/admin/bookings/${id}`, { method: "DELETE" });
+   393→   393→      if (res.ok) {
+   394→   394→        setBookings((prev) => prev.filter((b) => b.id !== id));
+   395→   395→        fetchStats();
+   396→   396→      }
+   397→   397→    } catch (err) {
+   398→   398→      console.error("Failed to delete booking:", err);
+   399→   399→    }
+   400→   400→  };
+   401→   401→
+   402→   402→  // ─── Booking Actions (reschedule / cancel / refund) ─────────────
+   403→   403→  const [actionLoading, setActionLoading] = useState<string | null>(null);
+   404→   404→
+   405→   405→  const cancelBooking = async (id: string) => {
+   406→   406→    const reason = prompt("Cancellation reason (optional):") || undefined;
+   407→   407→    setActionLoading(id);
+   408→   408→    try {
+   409→   409→      const res = await fetch(`/api/bookings/${id}/cancel`, {
+   410→   410→        method: "POST",
+   411→   411→        headers: { "Content-Type": "application/json" },
+   412→   412→        body: JSON.stringify({ reason, notifyCustomer: true }),
+   413→   413→      });
+   414→   414→      if (res.ok) {
+   415→   415→        setBookings((prev) => prev.map((b) => b.id === id ? { ...b, status: "cancelled" } : b));
+   416→   416→        fetchStats();
+   417→   417→      } else {
+   418→   418→        const data = await res.json();
+   419→   419→        alert(data.error || "Failed to cancel booking");
+   420→   420→      }
+   421→   421→    } catch (err) {
+   422→   422→      console.error("Failed to cancel booking:", err);
+   423→   423→    } finally {
+   424→   424→      setActionLoading(null);
+   425→   425→    }
+   426→   426→  };
+   427→   427→
+   428→   428→  const refundBooking = async (id: string) => {
+   429→   429→    if (!confirm("Process a full refund for this booking?")) return;
+   430→   430→    setActionLoading(id);
+   431→   431→    try {
+   432→   432→      const res = await fetch(`/api/stripe/refund-booking`, {
+   433→   433→        method: "POST",
+   434→   434→        headers: { "Content-Type": "application/json" },
+   435→   435→        body: JSON.stringify({ bookingId: id, reason: "requested_by_customer" }),
+   436→   436→      });
+   437→   437→      if (res.ok) {
+   438→   438→        setBookings((prev) => prev.map((b) => b.id === id ? { ...b, status: "refunded" } : b));
+   439→   439→        fetchStats();
+   440→   440→      } else {
+   441→   441→        const data = await res.json();
+   442→   442→        alert(data.error || "Failed to process refund");
+   443→   443→      }
+   444→   444→    } catch (err) {
+   445→   445→      console.error("Failed to process refund:", err);
+   446→   446→    } finally {
+   447→   447→      setActionLoading(null);
+   448→   448→    }
+   449→   449→  };
+   450→   450→
+   451→   451→  const resendConfirmation = async (booking: Booking) => {
+   452→   452→    setActionLoading(booking.id);
+   453→   453→    try {
+   454→   454→      const res = await fetch(`/api/admin/bookings/${booking.id}/resend-email`, {
+   455→   455→        method: "POST",
+   456→   456→      });
+   457→   457→      if (res.ok) {
+   458→   458→        alert(`Confirmation email resent to ${booking.email}`);
+   459→   459→      } else {
+   460→   460→        const data = await res.json();
+   461→   461→        alert(data.error || "Failed to resend email");
+   462→   462→      }
+   463→   463→    } catch (err) {
+   464→   464→      console.error("Failed to resend email:", err);
+   465→   465→    } finally {
+   466→   466→      setActionLoading(null);
+   467→   467→    }
+   468→   468→  };
+   469→   469→
+   470→   470→  // ─── Copy room URL helper ───────────────────────────────────────
+   471→   471→  const handleCopyRoomUrl = async (url: string, id: string) => {
+   472→   472→    try {
+   473→   473→      await navigator.clipboard.writeText(url);
+   474→   474→    } catch {
+   475→   475→      const input = document.createElement("input");
+   476→   476→      input.value = url;
+   477→   477→      document.body.appendChild(input);
+   478→   478→      input.select();
+   479→   479→      document.execCommand("copy");
+   480→   480→      document.body.removeChild(input);
+   481→   481→    }
+   482→   482→    setCopiedRoomId(id);
+   483→   483→    setTimeout(() => setCopiedRoomId(null), 2000);
+   484→   484→  };
+   485→   485→
+   486→   486→  // ─── Filtered Bookings ──────────────────────────────────────────
+   487→   487→
+   488→   488→  const filteredBookings = bookings.filter((b) => {
+   489→   489→    if (!searchQuery) return true;
+   490→   490→    const q = searchQuery.toLowerCase();
+   491→   491→    return (
+   492→   492→      b.name.toLowerCase().includes(q) ||
+   493→   493→      b.email.toLowerCase().includes(q) ||
+   494→   494→      b.id.toLowerCase().includes(q)
+   495→   495→    );
+   496→   496→  });
+   497→   497→
+   498→   498→  // ─── Render ──────────────────────────────────────────────────────
+   499→   499→
+   500→   500→  return (
+   501→   501→    <div className="min-h-screen bg-[#050505] text-[#e8e6e1]">
+   502→   502→      {/* Grain overlay inherited from layout */}
+   503→   503→      <div className="grain-overlay" style={{ opacity: 0.008 }} />
+   504→   504→
+   505→   505→      {/* ─── Header ──────────────────────────────────────────────── */}
+   506→   506→      <motion.header
+   507→   507→        initial={{ opacity: 0, y: -20 }}
+   508→   508→        animate={{ opacity: 1, y: 0 }}
+   509→   509→        transition={{ duration: 0.6 }}
+   510→   510→        className="sticky top-0 z-40 bg-[#050505]/80 backdrop-blur-xl border-b border-white/[0.04]"
+   511→   511→      >
+   512→   512→        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+   513→   513→          <div className="flex items-center justify-between h-16 sm:h-20">
+   514→   514→            <div className="flex items-center gap-3 sm:gap-4">
+   515→   515→              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#c9a96e] to-[#a8884d] flex items-center justify-center">
+   516→   516→                <Star className="size-4 text-[#050505]" />
+   517→   517→              </div>
+   518→   518→              <div>
+   519→   519→                <h1 className="text-editorial text-sm sm:text-base text-[#f0eee9] tracking-[0.12em]">
+   520→   520→                  ASTROKALKI
+   521→   521→                </h1>
+   522→   522→                <p className="text-body-cinematic text-[10px] sm:text-xs">
+   523→   523→                  Command Center
+   524→   524→                </p>
+   525→   525→              </div>
+   526→   526→            </div>
+   527→   527→            <div className="flex items-center gap-2 sm:gap-3">
+   528→   528→              <Link
+   529→   529→                href="/admin/testimonials"
+   530→   530→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   531→   531→                title="Moderate public testimonial submissions"
+   532→   532→              >
+   533→   533→                <Quote className="size-3" />
+   534→   534→                <span className="hidden sm:inline">Testimonials</span>
+   535→   535→              </Link>
+   536→   536→              <Link
+   537→   537→                href="/admin/case-studies"
+   538→   538→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   539→   539→                title="Long-form anonymised client journeys — Problem, Pattern, Session, Shift"
+   540→   540→              >
+   541→   541→                <FileText className="size-3" />
+   542→   542→                <span className="hidden sm:inline">Case Studies</span>
+   543→   543→              </Link>
+   544→   544→              <Link
+   545→   545→                href="/admin/analytics"
+   546→   546→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   547→   547→                title="Behaviour & conversion analytics"
+   548→   548→              >
+   549→   549→                <BarChart3 className="size-3" />
+   550→   550→                <span className="hidden sm:inline">Analytics</span>
+   551→   551→              </Link>
+   552→   552→              <Link
+   553→   553→                href="/admin/revenue"
+   554→   554→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   555→   555→                title="Revenue, churn & cohort analytics"
+   556→   556→              >
+   557→   557→                <TrendingUp className="size-3" />
+   558→   558→                <span className="hidden sm:inline">Revenue</span>
+   559→   559→              </Link>
+   560→   560→              <Link
+   561→   561→                href="/admin/referrals"
+   562→   562→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   563→   563→                title="Referral programme dashboard"
+   564→   564→              >
+   565→   565→                <Users className="size-3" />
+   566→   566→                <span className="hidden sm:inline">Referrals</span>
+   567→   567→              </Link>
+   568→   568→              <Link
+   569→   569→                href="/admin/recordings"
+   570→   570→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   571→   571→                title="Upload & manage recorded session audio"
+   572→   572→              >
+   573→   573→                <Disc3 className="size-3" />
+   574→   574→                <span className="hidden sm:inline">Recordings</span>
+   575→   575→              </Link>
+   576→   576→              <Link
+   577→   577→                href="/admin/availability"
+   578→   578→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   579→   579→                title="Toggle AstroKalki's real-time availability indicator"
+   580→   580→              >
+   581→   581→                <Radio className="size-3" />
+   582→   582→                <span className="hidden sm:inline">Availability</span>
+   583→   583→              </Link>
+   584→   584→              <Link
+   585→   585→                href="/admin/write"
+   586→   586→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   587→   587→                title="AI writing assistant — draft new articles in the AstroKalki voice"
+   588→   588→              >
+   589→   589→                <PenLine className="size-3" />
+   590→   590→                <span className="hidden sm:inline">Write</span>
+   591→   591→              </Link>
+   592→   592→              <Link
+   593→   593→                href="/admin/programmatic"
+   594→   594→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   595→   595→                title="Programmatic SEO — city × pattern landing pages"
+   596→   596→              >
+   597→   597→                <Globe className="size-3" />
+   598→   598→                <span className="hidden sm:inline">SEO Pages</span>
+   599→   599→              </Link>
+   600→   600→              <Link
+   601→   601→                href="/admin/seo"
+   602→   602→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   603→   603→                title="Local SEO — 200+ city × pattern pages (LOCAL generator, no LLM)"
+   604→   604→              >
+   605→   605→                <MapPin className="size-3" />
+   606→   606→                <span className="hidden sm:inline">Local SEO</span>
+   607→   607→              </Link>
+   608→   608→              <Link
+   609→   609→                href="/admin/social-images"
+   610→   610→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   611→   611→                title="AI-generated social share images for every article + guide"
+   612→   612→              >
+   613→   613→                <Images className="size-3" />
+   614→   614→                <span className="hidden sm:inline">Social Images</span>
+   615→   615→              </Link>
+   616→   616→              <a
+   617→   617→                href="/"
+   618→   618→                target="_blank"
+   619→   619→                rel="noopener noreferrer"
+   620→   620→                className="btn-outline-gold px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+   621→   621→              >
+   622→   622→                <ExternalLink className="size-3" />
+   623→   623→                <span className="hidden sm:inline">View Site</span>
+   624→   624→              </a>
+   625→   625→              <Button
+   626→   626→                variant="ghost"
+   627→   627→                size="icon"
+   628→   628→                onClick={handleRefresh}
+   629→   629→                disabled={refreshing}
+   630→   630→                className="text-[#9a9a9a] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+   631→   631→              >
+   632→   632→                <RefreshCw
+   633→   633→                  className={`size-4 ${refreshing ? "animate-spin" : ""}`}
+   634→   634→                />
+   635→   635→              </Button>
+   636→   636→              <Button
+   637→   637→                variant="ghost"
+   638→   638→                size="sm"
+   639→   639→                onClick={async () => {
+   640→   640→                  await fetch('/api/admin/logout', { method: 'POST' });
+   641→   641→                  window.location.href = '/admin/login';
+   642→   642→                }}
+   643→   643→                className="text-[#9a9a9a] hover:text-red-400 hover:bg-red-500/10 text-xs"
+   644→   644→              >
+   645→   645→                Logout
+   646→   646→              </Button>
+   647→   647→            </div>
+   648→   648→          </div>
+   649→   649→        </div>
+   650→   650→      </motion.header>
+   651→   651→
+   652→   652→      {/* ─── Main Content ────────────────────────────────────────── */}
+   653→   653→      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+   654→   654→        <Tabs value={activeTab} onValueChange={setActiveTab}>
+   655→   655→          {/* ─── Tab Navigation ─────────────────────────────────── */}
+   656→   656→          <div className="mb-6 sm:mb-8">
+   657→   657→            <TabsList className="bg-[#0a0a0a] border border-white/[0.04] rounded-lg p-1 h-auto flex-wrap gap-1">
+   658→   658→              <TabsTrigger
+   659→   659→                value="overview"
+   660→   660→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   661→   661→              >
+   662→   662→                <Eye className="size-3.5 mr-1.5" />
+   663→   663→                Overview
+   664→   664→              </TabsTrigger>
+   665→   665→              <TabsTrigger
+   666→   666→                value="bookings"
+   667→   667→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   668→   668→              >
+   669→   669→                <Calendar className="size-3.5 mr-1.5" />
+   670→   670→                Bookings
+   671→   671→                {stats && stats.pendingBookings > 0 && (
+   672→   672→                  <span className="ml-1.5 bg-yellow-400/20 text-yellow-400 text-[10px] px-1.5 py-0.5 rounded-full">
+   673→   673→                    {stats.pendingBookings}
+   674→   674→                  </span>
+   675→   675→                )}
+   676→   676→              </TabsTrigger>
+   677→   677→              <TabsTrigger
+   678→   678→                value="newsletter"
+   679→   679→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   680→   680→              >
+   681→   681→                <Mail className="size-3.5 mr-1.5" />
+   682→   682→                Newsletter
+   683→   683→              </TabsTrigger>
+   684→   684→              <TabsTrigger
+   685→   685→                value="micro-readings"
+   686→   686→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   687→   687→              >
+   688→   688→                <Star className="size-3.5 mr-1.5" />
+   689→   689→                Micro-Readings
+   690→   690→              </TabsTrigger>
+   691→   691→              <TabsTrigger
+   692→   692→                value="rooms"
+   693→   693→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   694→   694→              >
+   695→   695→                <Video className="size-3.5 mr-1.5" />
+   696→   696→                Rooms
+   697→   697→              </TabsTrigger>
+   698→   698→              <TabsTrigger
+   699→   699→                value="email-analytics"
+   700→   700→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   701→   701→              >
+   702→   702→                <Mail className="size-3.5 mr-1.5" />
+   703→   703→                <span className="hidden sm:inline">Email</span>
+   704→   704→              </TabsTrigger>
+   705→   705→              <TabsTrigger
+   706→   706→                value="funnel"
+   707→   707→                className="data-[state=active]:bg-[#c9a96e]/10 data-[state=active]:text-[#c9a96e] data-[state=active]:border-[#c9a96e]/20 text-[#9a9a9a] rounded-md px-3 sm:px-4 py-2 text-xs sm:text-sm"
+   708→   708→              >
+   709→   709→                <BarChart3 className="size-3.5 mr-1.5" />
+   710→   710→                <span className="hidden sm:inline">Funnel</span>
+   711→   711→              </TabsTrigger>
+   712→   712→            </TabsList>
+   713→   713→          </div>
+   714→   714→
+   715→   715→          {/* ═══════════════════════════════════════════════════════
+   716→   716→              OVERVIEW TAB
+   717→   717→              ═══════════════════════════════════════════════════════ */}
+   718→   718→          <TabsContent value="overview">
+   719→   719→            {loading ? (
+   720→   720→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+   721→   721→                {[...Array(4)].map((_, i) => (
+   722→   722→                  <Card
+   723→   723→                    key={i}
+   724→   724→                    className="bg-[#0a0a0a] border-white/[0.04]"
+   725→   725→                  >
+   726→   726→                    <CardContent className="p-6 space-y-3">
+   727→   727→                      <Skeleton className="h-3 w-20 bg-[#141414]" />
+   728→   728→                      <Skeleton className="h-8 w-24 bg-[#141414]" />
+   729→   729→                      <Skeleton className="h-3 w-32 bg-[#141414]" />
+   730→   730→                    </CardContent>
+   731→   731→                  </Card>
+   732→   732→                ))}
+   733→   733→              </div>
+   734→   734→            ) : stats ? (
+   735→   735→              <>
+   736→   736→                {/* Stats Grid */}
+   737→   737→                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
+   738→   738→                  <StatCard
+   739→   739→                    title="Total Bookings"
+   740→   740→                    value={stats.totalBookings}
+   741→   741→                    subtitle={`${stats.recentBookings} this week`}
+   742→   742→                    icon={<Calendar className="size-5 text-[#c9a96e]" />}
+   743→   743→                    accent="bg-[#c9a96e]/10"
+   744→   744→                    delay={0}
+   745→   745→                  />
+   746→   746→                  <StatCard
+   747→   747→                    title="Pending"
+   748→   748→                    value={stats.pendingBookings}
+   749→   749→                    subtitle={
+   750→   750→                      stats.pendingBookings > 0
+   751→   751→                        ? "Needs attention"
+   752→   752→                        : "All clear"
+   753→   753→                    }
+   754→   754→                    icon={
+   755→   755→                      <AlertCircle className="size-5 text-yellow-400" />
+   756→   756→                    }
+   757→   757→                    accent="bg-yellow-400/10"
+   758→   758→                    delay={0.1}
+   759→   759→                  />
+   760→   760→                  <StatCard
+   761→   761→                    title="Revenue"
+   762→   762→                    value={`₹${stats.totalRevenue.toLocaleString("en-IN")}`}
+   763→   763→                    subtitle={`From ${stats.confirmedBookings + stats.completedBookings} bookings`}
+   764→   764→                    icon={<DollarSign className="size-5 text-emerald-400" />}
+   765→   765→                    accent="bg-emerald-400/10"
+   766→   766→                    delay={0.2}
+   767→   767→                  />
+   768→   768→                  <StatCard
+   769→   769→                    title="Newsletter"
+   770→   770→                    value={stats.totalNewsletter}
+   771→   771→                    subtitle={`${stats.recentNewsletter} this week`}
+   772→   772→                    icon={<Users className="size-5 text-blue-400" />}
+   773→   773→                    accent="bg-blue-400/10"
+   774→   774→                    delay={0.3}
+   775→   775→                  />
+   776→   776→                </div>
+   777→   777→
+   778→   778→                {/* Secondary Stats */}
+   779→   779→                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-8">
+   780→   780→                  <motion.div
+   781→   781→                    initial={{ opacity: 0, y: 15 }}
+   782→   782→                    animate={{ opacity: 1, y: 0 }}
+   783→   783→                    transition={{ duration: 0.5, delay: 0.4 }}
+   784→   784→                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
+   785→   785→                  >
+   786→   786→                    <p className="text-emerald-400 text-lg sm:text-xl font-bold">
+   787→   787→                      {stats.completedBookings}
+   788→   788→                    </p>
+   789→   789→                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
+   790→   790→                      Completed
+   791→   791→                    </p>
+   792→   792→                  </motion.div>
+   793→   793→                  <motion.div
+   794→   794→                    initial={{ opacity: 0, y: 15 }}
+   795→   795→                    animate={{ opacity: 1, y: 0 }}
+   796→   796→                    transition={{ duration: 0.5, delay: 0.45 }}
+   797→   797→                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
+   798→   798→                  >
+   799→   799→                    <p className="text-[#c9a96e] text-lg sm:text-xl font-bold">
+   800→   800→                      {stats.confirmedBookings}
+   801→   801→                    </p>
+   802→   802→                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
+   803→   803→                      Confirmed
+   804→   804→                    </p>
+   805→   805→                  </motion.div>
+   806→   806→                  <motion.div
+   807→   807→                    initial={{ opacity: 0, y: 15 }}
+   808→   808→                    animate={{ opacity: 1, y: 0 }}
+   809→   809→                    transition={{ duration: 0.5, delay: 0.5 }}
+   810→   810→                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
+   811→   811→                  >
+   812→   812→                    <p className="text-[#c0392b] text-lg sm:text-xl font-bold">
+   813→   813→                      {stats.cancelledBookings}
+   814→   814→                    </p>
+   815→   815→                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
+   816→   816→                      Cancelled
+   817→   817→                    </p>
+   818→   818→                  </motion.div>
+   819→   819→                  <motion.div
+   820→   820→                    initial={{ opacity: 0, y: 15 }}
+   821→   821→                    animate={{ opacity: 1, y: 0 }}
+   822→   822→                    transition={{ duration: 0.5, delay: 0.55 }}
+   823→   823→                    className="bg-[#0a0a0a] border border-white/[0.04] rounded-xl p-4 text-center"
+   824→   824→                  >
+   825→   825→                    <p className="text-blue-400 text-lg sm:text-xl font-bold">
+   826→   826→                      {stats.totalMicroReadings}
+   827→   827→                    </p>
+   828→   828→                    <p className="text-body-cinematic text-[10px] sm:text-xs mt-1">
+   829→   829→                      Micro-Leads
+   830→   830→                    </p>
+   831→   831→                  </motion.div>
+   832→   832→                </div>
+   833→   833→
+   834→   834→                {/* Recent Bookings Quick View */}
+   835→   835→                <motion.div
+   836→   836→                  initial={{ opacity: 0, y: 20 }}
+   837→   837→                  animate={{ opacity: 1, y: 0 }}
+   838→   838→                  transition={{ duration: 0.5, delay: 0.6 }}
+   839→   839→                >
+   840→   840→                  <Card className="bg-[#0a0a0a] border-white/[0.04]">
+   841→   841→                    <CardHeader>
+   842→   842→                      <div className="flex items-center justify-between">
+   843→   843→                        <div>
+   844→   844→                          <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
+   845→   845→                            RECENT BOOKINGS
+   846→   846→                          </CardTitle>
+   847→   847→                          <CardDescription className="text-body-cinematic text-xs mt-1">
+   848→   848→                            Latest booking activity
+   849→   849→                          </CardDescription>
+   850→   850→                        </div>
+   851→   851→                        <Button
+   852→   852→                          variant="ghost"
+   853→   853→                          size="sm"
+   854→   854→                          onClick={() => setActiveTab("bookings")}
+   855→   855→                          className="text-[#c9a96e] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10 text-xs"
+   856→   856→                        >
+   857→   857→                          View All
+   858→   858→                          <ArrowUpRight className="size-3 ml-1" />
+   859→   859→                        </Button>
+   860→   860→                      </div>
+   861→   861→                    </CardHeader>
+   862→   862→                    <CardContent>
+   863→   863→                      {bookings.length === 0 ? (
+   864→   864→                        <div className="text-center py-8">
+   865→   865→                          <Calendar className="size-8 text-[#333] mx-auto mb-2" />
+   866→   866→                          <p className="text-body-cinematic text-sm">
+   867→   867→                            No bookings yet
+   868→   868→                          </p>
+   869→   869→                        </div>
+   870→   870→                      ) : (
+   871→   871→                        <div className="space-y-3 max-h-80 overflow-y-auto">
+   872→   872→                          {bookings.slice(0, 5).map((booking) => (
+   873→   873→                            <div
+   874→   874→                              key={booking.id}
+   875→   875→                              className="flex items-center justify-between p-3 rounded-lg bg-[#111]/50 border border-white/[0.02] hover:border-white/[0.06] transition-colors"
+   876→   876→                            >
+   877→   877→                              <div className="flex-1 min-w-0">
+   878→   878→                                <p className="text-[#f0eee9] text-sm font-medium truncate">
+   879→   879→                                  {booking.name}
+   880→   880→                                </p>
+   881→   881→                                <p className="text-body-cinematic text-xs truncate">
+   882→   882→                                  {booking.email}
+   883→   883→                                </p>
+   884→   884→                              </div>
+   885→   885→                              <div className="flex items-center gap-3 ml-3">
+   886→   886→                                <span className="text-[#c9a96e] text-sm font-medium whitespace-nowrap">
+   887→   887→                                  {formatPrice(booking.price)}
+   888→   888→                                </span>
+   889→   889→                                <StatusBadge status={booking.status} />
+   890→   890→                              </div>
+   891→   891→                            </div>
+   892→   892→                          ))}
+   893→   893→                        </div>
+   894→   894→                      )}
+   895→   895→                    </CardContent>
+   896→   896→                  </Card>
+   897→   897→                </motion.div>
+   898→   898→              </>
+   899→   899→            ) : (
+   900→   900→              <div className="text-center py-12">
+   901→   901→                <AlertCircle className="size-8 text-[#c0392b] mx-auto mb-3" />
+   902→   902→                <p className="text-body-cinematic">
+   903→   903→                  Failed to load dashboard data
+   904→   904→                </p>
+   905→   905→                <Button
+   906→   906→                  variant="outline"
+   907→   907→                  onClick={handleRefresh}
+   908→   908→                  className="btn-outline-gold mt-4"
+   909→   909→                >
+   910→   910→                  Retry
+   911→   911→                </Button>
+   912→   912→              </div>
+   913→   913→            )}
+   914→   914→          </TabsContent>
+   915→   915→
+   916→   916→          {/* ═══════════════════════════════════════════════════════
+   917→   917→              BOOKINGS TAB
+   918→   918→              ═══════════════════════════════════════════════════════ */}
+   919→   919→          <TabsContent value="bookings">
+   920→   920→            <motion.div
+   921→   921→              initial={{ opacity: 0, y: 20 }}
+   922→   922→              animate={{ opacity: 1, y: 0 }}
+   923→   923→              transition={{ duration: 0.4 }}
+   924→   924→            >
+   925→   925→              <Card className="bg-[#0a0a0a] border-white/[0.04]">
+   926→   926→                <CardHeader>
+   927→   927→                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+   928→   928→                    <div>
+   929→   929→                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
+   930→   930→                        BOOKING MANAGEMENT
+   931→   931→                      </CardTitle>
+   932→   932→                      <CardDescription className="text-body-cinematic text-xs mt-1">
+   933→   933→                        {filteredBookings.length} booking
+   934→   934→                        {filteredBookings.length !== 1 ? "s" : ""} found
+   935→   935→                      </CardDescription>
+   936→   936→                    </div>
+   937→   937→                    <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+   938→   938→                      <div className="relative">
+   939→   939→                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[#9a9a9a]" />
+   940→   940→                        <Input
+   941→   941→                          placeholder="Search bookings..."
+   942→   942→                          value={searchQuery}
+   943→   943→                          onChange={(e) => setSearchQuery(e.target.value)}
+   944→   944→                          className="pl-8 h-8 text-xs bg-[#111] border-white/[0.06] text-[#e8e6e1] placeholder:text-[#555] w-full sm:w-48 focus:border-[#c9a96e]/30 focus:ring-[#c9a96e]/20"
+   945→   945→                        />
+   946→   946→                      </div>
+   947→   947→                      <Select value={bookingFilter} onValueChange={setBookingFilter}>
+   948→   948→                        <SelectTrigger className="h-8 text-xs bg-[#111] border-white/[0.06] text-[#e8e6e1] w-full sm:w-36">
+   949→   949→                          <SelectValue />
+   950→   950→                        </SelectTrigger>
+   951→   951→                        <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
+   952→   952→                          <SelectItem value="all" className="text-xs text-[#e8e6e1] focus:bg-[#c9a96e]/10 focus:text-[#c9a96e]">
+   953→   953→                            All Status
+   954→   954→                          </SelectItem>
+   955→   955→                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
+   956→   956→                            Pending
+   957→   957→                          </SelectItem>
+   958→   958→                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
+   959→   959→                            Confirmed
+   960→   960→                          </SelectItem>
+   961→   961→                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
+   962→   962→                            Completed
+   963→   963→                          </SelectItem>
+   964→   964→                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
+   965→   965→                            Cancelled
+   966→   966→                          </SelectItem>
+   967→   967→                        </SelectContent>
+   968→   968→                      </Select>
+   969→   969→                    </div>
+   970→   970→                  </div>
+   971→   971→                </CardHeader>
+   972→   972→                <CardContent>
+   973→   973→                  {loading ? (
+   974→   974→                    <div className="space-y-3">
+   975→   975→                      {[...Array(5)].map((_, i) => (
+   976→   976→                        <Skeleton
+   977→   977→                          key={i}
+   978→   978→                          className="h-14 w-full bg-[#141414] rounded-lg"
+   979→   979→                        />
+   980→   980→                      ))}
+   981→   981→                    </div>
+   982→   982→                  ) : filteredBookings.length === 0 ? (
+   983→   983→                    <div className="text-center py-12">
+   984→   984→                      <Calendar className="size-10 text-[#333] mx-auto mb-3" />
+   985→   985→                      <p className="text-body-cinematic text-sm">
+   986→   986→                        No bookings found
+   987→   987→                      </p>
+   988→   988→                      {bookingFilter !== "all" && (
+   989→   989→                        <Button
+   990→   990→                          variant="ghost"
+   991→   991→                          size="sm"
+   992→   992→                          onClick={() => setBookingFilter("all")}
+   993→   993→                          className="text-[#c9a96e] mt-3 text-xs"
+   994→   994→                        >
+   995→   995→                          Clear filter
+   996→   996→                        </Button>
+   997→   997→                      )}
+   998→   998→                    </div>
+   999→   999→                  ) : (
+  1000→  1000→                    <>
+  1001→  1001→                      {/* Desktop Table */}
+  1002→  1002→                      <div className="hidden md:block overflow-x-auto">
+  1003→  1003→                        <Table>
+  1004→  1004→                          <TableHeader>
+  1005→  1005→                            <TableRow className="border-white/[0.04] hover:bg-transparent">
+  1006→  1006→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1007→  1007→                                Name
+  1008→  1008→                              </TableHead>
+  1009→  1009→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1010→  1010→                                Email
+  1011→  1011→                              </TableHead>
+  1012→  1012→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1013→  1013→                                Duration
+  1014→  1014→                              </TableHead>
+  1015→  1015→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1016→  1016→                                Price
+  1017→  1017→                              </TableHead>
+  1018→  1018→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1019→  1019→                                Status
+  1020→  1020→                              </TableHead>
+  1021→  1021→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1022→  1022→                                Meeting
+  1023→  1023→                              </TableHead>
+  1024→  1024→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1025→  1025→                                Date
+  1026→  1026→                              </TableHead>
+  1027→  1027→                              <TableHead className="text-[#9a9a9a] text-xs font-medium text-right">
+  1028→  1028→                                Actions
+  1029→  1029→                              </TableHead>
+  1030→  1030→                            </TableRow>
+  1031→  1031→                          </TableHeader>
+  1032→  1032→                          <TableBody>
+  1033→  1033→                            <AnimatePresence mode="popLayout">
+  1034→  1034→                              {filteredBookings.map((booking, i) => (
+  1035→  1035→                                <motion.tr
+  1036→  1036→                                  key={booking.id}
+  1037→  1037→                                  initial={{ opacity: 0, x: -10 }}
+  1038→  1038→                                  animate={{ opacity: 1, x: 0 }}
+  1039→  1039→                                  exit={{ opacity: 0, x: 10 }}
+  1040→  1040→                                  transition={{ duration: 0.3, delay: i * 0.03 }}
+  1041→  1041→                                  className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+  1042→  1042→                                >
+  1043→  1043→                                  <TableCell className="text-[#f0eee9] text-sm font-medium">
+  1044→  1044→                                    {booking.name}
+  1045→  1045→                                  </TableCell>
+  1046→  1046→                                  <TableCell className="text-body-cinematic text-xs">
+  1047→  1047→                                    {booking.email}
+  1048→  1048→                                  </TableCell>
+  1049→  1049→                                  <TableCell>
+  1050→  1050→                                    <div className="flex items-center gap-1 text-body-cinematic text-xs">
+  1051→  1051→                                      <Clock className="size-3" />
+  1052→  1052→                                      {booking.duration}m
+  1053→  1053→                                    </div>
+  1054→  1054→                                  </TableCell>
+  1055→  1055→                                  <TableCell className="text-[#c9a96e] text-sm font-medium">
+  1056→  1056→                                    {formatPrice(booking.price)}
+  1057→  1057→                                  </TableCell>
+  1058→  1058→                                  <TableCell>
+  1059→  1059→                                    <StatusBadge status={booking.status} />
+  1060→  1060→                                  </TableCell>
+  1061→  1061→                                  <TableCell>
+  1062→  1062→                                    {(booking.status === "confirmed" || booking.status === "completed") && booking.roomUrl ? (
+  1063→  1063→                                      <div className="flex items-center gap-1">
+  1064→  1064→                                        <Badge
+  1065→  1065→                                          variant="outline"
+  1066→  1066→                                          className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]"
+  1067→  1067→                                        >
+  1068→  1068→                                          <CheckCircle2 className="size-2.5 mr-1" />
+  1069→  1069→                                          Ready
+  1070→  1070→                                        </Badge>
+  1071→  1071→                                        <Button
+  1072→  1072→                                          variant="ghost"
+  1073→  1073→                                          size="sm"
+  1074→  1074→                                          className="size-6 p-0 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+  1075→  1075→                                          onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)}
+  1076→  1076→                                          aria-label="Copy meeting link"
+  1077→  1077→                                        >
+  1078→  1078→                                          {copiedRoomId === booking.id ? (
+  1079→  1079→                                            <CheckCircle2 className="size-3 text-emerald-400" />
+  1080→  1080→                                          ) : (
+  1081→  1081→                                            <Copy className="size-3" />
+  1082→  1082→                                          )}
+  1083→  1083→                                        </Button>
+  1084→  1084→                                        <a
+  1085→  1085→                                          href={booking.roomUrl}
+  1086→  1086→                                          target="_blank"
+  1087→  1087→                                          rel="noopener noreferrer"
+  1088→  1088→                                          className="inline-flex size-6 items-center justify-center text-[#555] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors"
+  1089→  1089→                                          aria-label="Open meeting in new tab"
+  1090→  1090→                                        >
+  1091→  1091→                                          <ExternalLink className="size-3" />
+  1092→  1092→                                        </a>
+  1093→  1093→                                      </div>
+  1094→  1094→                                    ) : (
+  1095→  1095→                                      <span className="text-[#555] text-[10px]">—</span>
+  1096→  1096→                                    )}
+  1097→  1097→                                  </TableCell>
+  1098→  1098→                                  <TableCell className="text-body-cinematic text-xs">
+  1099→  1099→                                    {formatDate(booking.createdAt)}
+  1100→  1100→                                  </TableCell>
+  1101→  1101→                                  <TableCell className="text-right">
+  1102→  1102→                                    <div className="flex items-center justify-end gap-1">
+  1103→  1103→                                      {/* Resend Email (only for confirmed/completed) */}
+  1104→  1104→                                      {(booking.status === "confirmed" || booking.status === "completed") && (
+  1105→  1105→                                        <Button
+  1106→  1106→                                          variant="ghost"
+  1107→  1107→                                          size="icon"
+  1108→  1108→                                          className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+  1109→  1109→                                          onClick={() => resendConfirmation(booking)}
+  1110→  1110→                                          title="Resend confirmation email"
+  1111→  1111→                                          disabled={actionLoading === booking.id}
+  1112→  1112→                                        >
+  1113→  1113→                                          <Mail className="size-3" />
+  1114→  1114→                                        </Button>
+  1115→  1115→                                      )}
+  1116→  1116→                                      {/* Reschedule (only for pending/confirmed) */}
+  1117→  1117→                                      {(booking.status === "pending" || booking.status === "confirmed") && (
+  1118→  1118→                                        <Button
+  1119→  1119→                                          variant="ghost"
+  1120→  1120→                                          size="icon"
+  1121→  1121→                                          className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
+  1122→  1122→                                          onClick={() => alert("Reschedule requires selecting a new slot — use the Rooms tab to manage scheduling.")}
+  1123→  1123→                                          title="Reschedule"
+  1124→  1124→                                          disabled={actionLoading === booking.id}
+  1125→  1125→                                        >
+  1126→  1126→                                          <RotateCcw className="size-3" />
+  1127→  1127→                                        </Button>
+  1128→  1128→                                      )}
+  1129→  1129→                                      {/* Cancel (only for pending/confirmed) */}
+  1130→  1130→                                      {(booking.status === "pending" || booking.status === "confirmed") && (
+  1131→  1131→                                        <Button
+  1132→  1132→                                          variant="ghost"
+  1133→  1133→                                          size="icon"
+  1134→  1134→                                          className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+  1135→  1135→                                          onClick={() => cancelBooking(booking.id)}
+  1136→  1136→                                          title="Cancel booking"
+  1137→  1137→                                          disabled={actionLoading === booking.id}
+  1138→  1138→                                        >
+  1139→  1139→                                          <Ban className="size-3" />
+  1140→  1140→                                        </Button>
+  1141→  1141→                                      )}
+  1142→  1142→                                      {/* Refund (only for confirmed with payment) */}
+  1143→  1143→                                      {booking.status === "confirmed" && (
+  1144→  1144→                                        <Button
+  1145→  1145→                                          variant="ghost"
+  1146→  1146→                                          size="icon"
+  1147→  1147→                                          className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
+  1148→  1148→                                          onClick={() => refundBooking(booking.id)}
+  1149→  1149→                                          title="Refund payment"
+  1150→  1150→                                          disabled={actionLoading === booking.id}
+  1151→  1151→                                        >
+  1152→  1152→                                          <CreditCard className="size-3" />
+  1153→  1153→                                        </Button>
+  1154→  1154→                                      )}
+  1155→  1155→                                      <Select
+  1156→  1156→                                        value={booking.status}
+  1157→  1157→                                        onValueChange={(val) =>
+  1158→  1158→                                          updateBookingStatus(booking.id, val)
+  1159→  1159→                                        }
+  1160→  1160→                                        disabled={updatingId === booking.id}
+  1161→  1161→                                      >
+  1162→  1162→                                        <SelectTrigger
+  1163→  1163→                                          size="sm"
+  1164→  1164→                                          className="h-7 text-[10px] w-24 bg-[#111] border-white/[0.06] text-[#e8e6e1]"
+  1165→  1165→                                        >
+  1166→  1166→                                          <SelectValue />
+  1167→  1167→                                        </SelectTrigger>
+  1168→  1168→                                        <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
+  1169→  1169→                                          <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
+  1170→  1170→                                            Pending
+  1171→  1171→                                          </SelectItem>
+  1172→  1172→                                          <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
+  1173→  1173→                                            Confirmed
+  1174→  1174→                                          </SelectItem>
+  1175→  1175→                                          <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
+  1176→  1176→                                            Completed
+  1177→  1177→                                          </SelectItem>
+  1178→  1178→                                          <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
+  1179→  1179→                                            Cancelled
+  1180→  1180→                                          </SelectItem>
+  1181→  1181→                                        </SelectContent>
+  1182→  1182→                                      </Select>
+  1183→  1183→                                      <Button
+  1184→  1184→                                        variant="ghost"
+  1185→  1185→                                        size="icon"
+  1186→  1186→                                        className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+  1187→  1187→                                        onClick={() => deleteBooking(booking.id)}
+  1188→  1188→                                        title="Delete booking"
+  1189→  1189→                                      >
+  1190→  1190→                                        <Trash2 className="size-3" />
+  1191→  1191→                                      </Button>
+  1192→  1192→                                    </div>
+  1193→  1193→                                  </TableCell>
+  1194→  1194→                                </motion.tr>
+  1195→  1195→                              ))}
+  1196→  1196→                            </AnimatePresence>
+  1197→  1197→                          </TableBody>
+  1198→  1198→                        </Table>
+  1199→  1199→                      </div>
+  1200→  1200→
+  1201→  1201→                      {/* Mobile Cards */}
+  1202→  1202→                      <div className="md:hidden space-y-3 max-h-[70vh] overflow-y-auto">
+  1203→  1203→                        {filteredBookings.map((booking, i) => (
+  1204→  1204→                          <motion.div
+  1205→  1205→                            key={booking.id}
+  1206→  1206→                            initial={{ opacity: 0, y: 10 }}
+  1207→  1207→                            animate={{ opacity: 1, y: 0 }}
+  1208→  1208→                            transition={{ duration: 0.3, delay: i * 0.05 }}
+  1209→  1209→                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3"
+  1210→  1210→                          >
+  1211→  1211→                            <div className="flex items-start justify-between">
+  1212→  1212→                              <div className="min-w-0 flex-1">
+  1213→  1213→                                <p className="text-[#f0eee9] text-sm font-medium truncate">
+  1214→  1214→                                  {booking.name}
+  1215→  1215→                                </p>
+  1216→  1216→                                <p className="text-body-cinematic text-xs truncate">
+  1217→  1217→                                  {booking.email}
+  1218→  1218→                                </p>
+  1219→  1219→                              </div>
+  1220→  1220→                              <StatusBadge status={booking.status} />
+  1221→  1221→                            </div>
+  1222→  1222→                            <div className="flex items-center justify-between text-xs">
+  1223→  1223→                              <div className="flex items-center gap-3">
+  1224→  1224→                                <span className="text-body-cinematic flex items-center gap-1">
+  1225→  1225→                                  <Clock className="size-3" />
+  1226→  1226→                                  {booking.duration}m
+  1227→  1227→                                </span>
+  1228→  1228→                                <span className="text-[#c9a96e] font-medium">
+  1229→  1229→                                  {formatPrice(booking.price)}
+  1230→  1230→                                </span>
+  1231→  1231→                              </div>
+  1232→  1232→                              <span className="text-body-cinematic">
+  1233→  1233→                                {formatDate(booking.createdAt)}
+  1234→  1234→                              </span>
+  1235→  1235→                            </div>
+  1236→  1236→                            {/* Meeting link for mobile (additional row above status controls) */}
+  1237→  1237→                            {(booking.status === "confirmed" || booking.status === "completed") && booking.roomUrl && (
+  1238→  1238→                              <div className="flex items-center gap-2 pt-2 border-t border-white/[0.04]">
+  1239→  1239→                                <Badge
+  1240→  1240→                                  variant="outline"
+  1241→  1241→                                  className="bg-emerald-400/10 border-emerald-400/20 text-emerald-400 text-[10px]"
+  1242→  1242→                                >
+  1243→  1243→                                  <CheckCircle2 className="size-2.5 mr-1" />
+  1244→  1244→                                  Room Ready
+  1245→  1245→                                </Badge>
+  1246→  1246→                                <Button
+  1247→  1247→                                  variant="ghost"
+  1248→  1248→                                  size="sm"
+  1249→  1249→                                  className="h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+  1250→  1250→                                  onClick={() => handleCopyRoomUrl(booking.roomUrl!, booking.id)}
+  1251→  1251→                                >
+  1252→  1252→                                  {copiedRoomId === booking.id ? (
+  1253→  1253→                                    <CheckCircle2 className="size-3 text-emerald-400 mr-1" />
+  1254→  1254→                                  ) : (
+  1255→  1255→                                    <Copy className="size-3 mr-1" />
+  1256→  1256→                                  )}
+  1257→  1257→                                  {copiedRoomId === booking.id ? "Copied!" : "Copy Link"}
+  1258→  1258→                                </Button>
+  1259→  1259→                                <a
+  1260→  1260→                                  href={booking.roomUrl}
+  1261→  1261→                                  target="_blank"
+  1262→  1262→                                  rel="noopener noreferrer"
+  1263→  1263→                                  className="inline-flex items-center gap-1 h-6 px-2 text-[10px] text-[#9a9a9a] hover:text-emerald-400 hover:bg-emerald-400/10 rounded-md transition-colors"
+  1264→  1264→                                >
+  1265→  1265→                                  <ExternalLink className="size-3" />
+  1266→  1266→                                  Open
+  1267→  1267→                                </a>
+  1268→  1268→                              </div>
+  1269→  1269→                            )}
+  1270→  1270→                            <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
+  1271→  1271→                              <div className="flex items-center gap-1">
+  1272→  1272→                                {(booking.status === "confirmed" || booking.status === "completed") && (
+  1273→  1273→                                  <Button
+  1274→  1274→                                    variant="ghost"
+  1275→  1275→                                    size="icon"
+  1276→  1276→                                    className="size-7 text-[#555] hover:text-[#c9a96e] hover:bg-[#c9a96e]/10"
+  1277→  1277→                                    onClick={() => resendConfirmation(booking)}
+  1278→  1278→                                    title="Resend email"
+  1279→  1279→                                    disabled={actionLoading === booking.id}
+  1280→  1280→                                  >
+  1281→  1281→                                    <Mail className="size-3" />
+  1282→  1282→                                  </Button>
+  1283→  1283→                                )}
+  1284→  1284→                                {(booking.status === "pending" || booking.status === "confirmed") && (
+  1285→  1285→                                  <Button
+  1286→  1286→                                    variant="ghost"
+  1287→  1287→                                    size="icon"
+  1288→  1288→                                    className="size-7 text-[#555] hover:text-blue-400 hover:bg-blue-400/10"
+  1289→  1289→                                    onClick={() => alert("Reschedule requires selecting a new slot — use the Rooms tab.")}
+  1290→  1290→                                    title="Reschedule"
+  1291→  1291→                                  >
+  1292→  1292→                                    <RotateCcw className="size-3" />
+  1293→  1293→                                  </Button>
+  1294→  1294→                                )}
+  1295→  1295→                                {(booking.status === "pending" || booking.status === "confirmed") && (
+  1296→  1296→                                  <Button
+  1297→  1297→                                    variant="ghost"
+  1298→  1298→                                    size="icon"
+  1299→  1299→                                    className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+  1300→  1300→                                    onClick={() => cancelBooking(booking.id)}
+  1301→  1301→                                    title="Cancel"
+  1302→  1302→                                  >
+  1303→  1303→                                    <Ban className="size-3" />
+  1304→  1304→                                  </Button>
+  1305→  1305→                                )}
+  1306→  1306→                                {booking.status === "confirmed" && (
+  1307→  1307→                                  <Button
+  1308→  1308→                                    variant="ghost"
+  1309→  1309→                                    size="icon"
+  1310→  1310→                                    className="size-7 text-[#555] hover:text-yellow-400 hover:bg-yellow-400/10"
+  1311→  1311→                                    onClick={() => refundBooking(booking.id)}
+  1312→  1312→                                    title="Refund"
+  1313→  1313→                                  >
+  1314→  1314→                                    <CreditCard className="size-3" />
+  1315→  1315→                                  </Button>
+  1316→  1316→                                )}
+  1317→  1317→                              </div>
+  1318→  1318→                              <div className="flex items-center gap-1">
+  1319→  1319→                                <Select
+  1320→  1320→                                  value={booking.status}
+  1321→  1321→                                  onValueChange={(val) =>
+  1322→  1322→                                    updateBookingStatus(booking.id, val)
+  1323→  1323→                                  }
+  1324→  1324→                                  disabled={updatingId === booking.id}
+  1325→  1325→                                >
+  1326→  1326→                                  <SelectTrigger
+  1327→  1327→                                    size="sm"
+  1328→  1328→                                    className="h-7 text-[10px] w-24 bg-[#0a0a0a] border-white/[0.06] text-[#e8e6e1]"
+  1329→  1329→                                  >
+  1330→  1330→                                    <SelectValue />
+  1331→  1331→                                  </SelectTrigger>
+  1332→  1332→                                  <SelectContent className="bg-[#0a0a0a] border-white/[0.06]">
+  1333→  1333→                                    <SelectItem value="pending" className="text-xs text-yellow-400 focus:bg-yellow-400/10">
+  1334→  1334→                                      Pending
+  1335→  1335→                                    </SelectItem>
+  1336→  1336→                                    <SelectItem value="confirmed" className="text-xs text-[#c9a96e] focus:bg-[#c9a96e]/10">
+  1337→  1337→                                      Confirmed
+  1338→  1338→                                    </SelectItem>
+  1339→  1339→                                    <SelectItem value="completed" className="text-xs text-emerald-400 focus:bg-emerald-400/10">
+  1340→  1340→                                      Completed
+  1341→  1341→                                    </SelectItem>
+  1342→  1342→                                    <SelectItem value="cancelled" className="text-xs text-[#c0392b] focus:bg-[#c0392b]/10">
+  1343→  1343→                                      Cancelled
+  1344→  1344→                                    </SelectItem>
+  1345→  1345→                                  </SelectContent>
+  1346→  1346→                                </Select>
+  1347→  1347→                                <Button
+  1348→  1348→                                  variant="ghost"
+  1349→  1349→                                  size="icon"
+  1350→  1350→                                  className="size-7 text-[#555] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+  1351→  1351→                                  onClick={() => deleteBooking(booking.id)}
+  1352→  1352→                                >
+  1353→  1353→                                  <Trash2 className="size-3" />
+  1354→  1354→                                </Button>
+  1355→  1355→                              </div>
+  1356→  1356→                            </div>
+  1357→  1357→                          </motion.div>
+  1358→  1358→                        ))}
+  1359→  1359→                      </div>
+  1360→  1360→                    </>
+  1361→  1361→                  )}
+  1362→  1362→                </CardContent>
+  1363→  1363→              </Card>
+  1364→  1364→            </motion.div>
+  1365→  1365→          </TabsContent>
+  1366→  1366→
+  1367→  1367→          {/* ═══════════════════════════════════════════════════════
+  1368→  1368→              NEWSLETTER TAB
+  1369→  1369→              ═══════════════════════════════════════════════════════ */}
+  1370→  1370→          <TabsContent value="newsletter">
+  1371→  1371→            <motion.div
+  1372→  1372→              initial={{ opacity: 0, y: 20 }}
+  1373→  1373→              animate={{ opacity: 1, y: 0 }}
+  1374→  1374→              transition={{ duration: 0.4 }}
+  1375→  1375→            >
+  1376→  1376→              <Card className="bg-[#0a0a0a] border-white/[0.04]">
+  1377→  1377→                <CardHeader>
+  1378→  1378→                  <div className="flex items-center justify-between">
+  1379→  1379→                    <div>
+  1380→  1380→                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
+  1381→  1381→                        NEWSLETTER SUBSCRIBERS
+  1382→  1382→                      </CardTitle>
+  1383→  1383→                      <CardDescription className="text-body-cinematic text-xs mt-1">
+  1384→  1384→                        {subscribers.length} subscriber
+  1385→  1385→                        {subscribers.length !== 1 ? "s" : ""}
+  1386→  1386→                      </CardDescription>
+  1387→  1387→                    </div>
+  1388→  1388→                    <div className="bg-[#c9a96e]/10 border border-[#c9a96e]/20 rounded-lg px-3 py-1.5">
+  1389→  1389→                      <span className="text-[#c9a96e] text-xs font-medium">
+  1390→  1390→                        {subscribers.length} total
+  1391→  1391→                      </span>
+  1392→  1392→                    </div>
+  1393→  1393→                  </div>
+  1394→  1394→                </CardHeader>
+  1395→  1395→                <CardContent>
+  1396→  1396→                  {loading ? (
+  1397→  1397→                    <div className="space-y-3">
+  1398→  1398→                      {[...Array(5)].map((_, i) => (
+  1399→  1399→                        <Skeleton
+  1400→  1400→                          key={i}
+  1401→  1401→                          className="h-10 w-full bg-[#141414] rounded-lg"
+  1402→  1402→                        />
+  1403→  1403→                      ))}
+  1404→  1404→                    </div>
+  1405→  1405→                  ) : subscribers.length === 0 ? (
+  1406→  1406→                    <div className="text-center py-12">
+  1407→  1407→                      <Mail className="size-10 text-[#333] mx-auto mb-3" />
+  1408→  1408→                      <p className="text-body-cinematic text-sm">
+  1409→  1409→                        No newsletter subscribers yet
+  1410→  1410→                      </p>
+  1411→  1411→                    </div>
+  1412→  1412→                  ) : (
+  1413→  1413→                    <>
+  1414→  1414→                      {/* Desktop Table */}
+  1415→  1415→                      <div className="hidden md:block overflow-x-auto">
+  1416→  1416→                        <Table>
+  1417→  1417→                          <TableHeader>
+  1418→  1418→                            <TableRow className="border-white/[0.04] hover:bg-transparent">
+  1419→  1419→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1420→  1420→                                #
+  1421→  1421→                              </TableHead>
+  1422→  1422→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1423→  1423→                                Email
+  1424→  1424→                              </TableHead>
+  1425→  1425→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1426→  1426→                                Source
+  1427→  1427→                              </TableHead>
+  1428→  1428→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1429→  1429→                                Subscribed
+  1430→  1430→                              </TableHead>
+  1431→  1431→                            </TableRow>
+  1432→  1432→                          </TableHeader>
+  1433→  1433→                          <TableBody>
+  1434→  1434→                            {subscribers.map((sub, i) => (
+  1435→  1435→                              <motion.tr
+  1436→  1436→                                key={sub.id}
+  1437→  1437→                                initial={{ opacity: 0 }}
+  1438→  1438→                                animate={{ opacity: 1 }}
+  1439→  1439→                                transition={{ duration: 0.3, delay: i * 0.03 }}
+  1440→  1440→                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+  1441→  1441→                              >
+  1442→  1442→                                <TableCell className="text-[#555] text-xs">
+  1443→  1443→                                  {i + 1}
+  1444→  1444→                                </TableCell>
+  1445→  1445→                                <TableCell className="text-[#f0eee9] text-sm">
+  1446→  1446→                                  {sub.email}
+  1447→  1447→                                </TableCell>
+  1448→  1448→                                <TableCell>
+  1449→  1449→                                  <Badge
+  1450→  1450→                                    variant="outline"
+  1451→  1451→                                    className="text-[#9a9a9a] border-white/[0.06] text-[10px]"
+  1452→  1452→                                  >
+  1453→  1453→                                    {sub.source || "website"}
+  1454→  1454→                                  </Badge>
+  1455→  1455→                                </TableCell>
+  1456→  1456→                                <TableCell className="text-body-cinematic text-xs">
+  1457→  1457→                                  {formatDateTime(sub.createdAt)}
+  1458→  1458→                                </TableCell>
+  1459→  1459→                              </motion.tr>
+  1460→  1460→                            ))}
+  1461→  1461→                          </TableBody>
+  1462→  1462→                        </Table>
+  1463→  1463→                      </div>
+  1464→  1464→
+  1465→  1465→                      {/* Mobile Cards */}
+  1466→  1466→                      <div className="md:hidden space-y-2 max-h-[70vh] overflow-y-auto">
+  1467→  1467→                        {subscribers.map((sub, i) => (
+  1468→  1468→                          <motion.div
+  1469→  1469→                            key={sub.id}
+  1470→  1470→                            initial={{ opacity: 0, y: 10 }}
+  1471→  1471→                            animate={{ opacity: 1, y: 0 }}
+  1472→  1472→                            transition={{ duration: 0.3, delay: i * 0.04 }}
+  1473→  1473→                            className="flex items-center justify-between p-3 bg-[#111]/50 border border-white/[0.04] rounded-lg"
+  1474→  1474→                          >
+  1475→  1475→                            <div className="min-w-0 flex-1">
+  1476→  1476→                              <p className="text-[#f0eee9] text-sm truncate">
+  1477→  1477→                                {sub.email}
+  1478→  1478→                              </p>
+  1479→  1479→                              <p className="text-body-cinematic text-[10px]">
+  1480→  1480→                                {formatDateTime(sub.createdAt)}
+  1481→  1481→                              </p>
+  1482→  1482→                            </div>
+  1483→  1483→                            <Badge
+  1484→  1484→                              variant="outline"
+  1485→  1485→                              className="text-[#9a9a9a] border-white/[0.06] text-[10px] ml-2"
+  1486→  1486→                            >
+  1487→  1487→                              {sub.source || "website"}
+  1488→  1488→                            </Badge>
+  1489→  1489→                          </motion.div>
+  1490→  1490→                        ))}
+  1491→  1491→                      </div>
+  1492→  1492→                    </>
+  1493→  1493→                  )}
+  1494→  1494→                </CardContent>
+  1495→  1495→              </Card>
+  1496→  1496→            </motion.div>
+  1497→  1497→          </TabsContent>
+  1498→  1498→
+  1499→  1499→          {/* ═══════════════════════════════════════════════════════
+  1500→  1500→              MICRO-READINGS TAB
+  1501→  1501→              ═══════════════════════════════════════════════════════ */}
+  1502→  1502→          <TabsContent value="micro-readings">
+  1503→  1503→            <motion.div
+  1504→  1504→              initial={{ opacity: 0, y: 20 }}
+  1505→  1505→              animate={{ opacity: 1, y: 0 }}
+  1506→  1506→              transition={{ duration: 0.4 }}
+  1507→  1507→            >
+  1508→  1508→              <Card className="bg-[#0a0a0a] border-white/[0.04]">
+  1509→  1509→                <CardHeader>
+  1510→  1510→                  <div className="flex items-center justify-between">
+  1511→  1511→                    <div>
+  1512→  1512→                      <CardTitle className="text-editorial text-sm text-[#f0eee9] tracking-wider">
+  1513→  1513→                        MICRO-READING LEADS
+  1514→  1514→                      </CardTitle>
+  1515→  1515→                      <CardDescription className="text-body-cinematic text-xs mt-1">
+  1516→  1516→                        {microReadings.length} lead
+  1517→  1517→                        {microReadings.length !== 1 ? "s" : ""} captured
+  1518→  1518→                      </CardDescription>
+  1519→  1519→                    </div>
+  1520→  1520→                    <div className="bg-[#c9a96e]/10 border border-[#c9a96e]/20 rounded-lg px-3 py-1.5">
+  1521→  1521→                      <span className="text-[#c9a96e] text-xs font-medium">
+  1522→  1522→                        {microReadings.length} total
+  1523→  1523→                      </span>
+  1524→  1524→                    </div>
+  1525→  1525→                  </div>
+  1526→  1526→                </CardHeader>
+  1527→  1527→                <CardContent>
+  1528→  1528→                  {loading ? (
+  1529→  1529→                    <div className="space-y-3">
+  1530→  1530→                      {[...Array(5)].map((_, i) => (
+  1531→  1531→                        <Skeleton
+  1532→  1532→                          key={i}
+  1533→  1533→                          className="h-20 w-full bg-[#141414] rounded-lg"
+  1534→  1534→                        />
+  1535→  1535→                      ))}
+  1536→  1536→                    </div>
+  1537→  1537→                  ) : microReadings.length === 0 ? (
+  1538→  1538→                    <div className="text-center py-12">
+  1539→  1539→                      <Star className="size-10 text-[#333] mx-auto mb-3" />
+  1540→  1540→                      <p className="text-body-cinematic text-sm">
+  1541→  1541→                        No micro-reading leads yet
+  1542→  1542→                      </p>
+  1543→  1543→                    </div>
+  1544→  1544→                  ) : (
+  1545→  1545→                    <>
+  1546→  1546→                      {/* Desktop Table */}
+  1547→  1547→                      <div className="hidden lg:block overflow-x-auto">
+  1548→  1548→                        <Table>
+  1549→  1549→                          <TableHeader>
+  1550→  1550→                            <TableRow className="border-white/[0.04] hover:bg-transparent">
+  1551→  1551→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1552→  1552→                                Email
+  1553→  1553→                              </TableHead>
+  1554→  1554→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1555→  1555→                                Birth Month
+  1556→  1556→                              </TableHead>
+  1557→  1557→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1558→  1558→                                Emotional Pattern
+  1559→  1559→                              </TableHead>
+  1560→  1560→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1561→  1561→                                Relationship Frustration
+  1562→  1562→                              </TableHead>
+  1563→  1563→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1564→  1564→                                Result Hint
+  1565→  1565→                              </TableHead>
+  1566→  1566→                              <TableHead className="text-[#9a9a9a] text-xs font-medium">
+  1567→  1567→                                Date
+  1568→  1568→                              </TableHead>
+  1569→  1569→                            </TableRow>
+  1570→  1570→                          </TableHeader>
+  1571→  1571→                          <TableBody>
+  1572→  1572→                            {microReadings.map((reading, i) => (
+  1573→  1573→                              <motion.tr
+  1574→  1574→                                key={reading.id}
+  1575→  1575→                                initial={{ opacity: 0 }}
+  1576→  1576→                                animate={{ opacity: 1 }}
+  1577→  1577→                                transition={{
+  1578→  1578→                                  duration: 0.3,
+  1579→  1579→                                  delay: i * 0.03,
+  1580→  1580→                                }}
+  1581→  1581→                                className="border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+  1582→  1582→                              >
+  1583→  1583→                                <TableCell className="text-[#f0eee9] text-sm">
+  1584→  1584→                                  {reading.email}
+  1585→  1585→                                </TableCell>
+  1586→  1586→                                <TableCell className="text-body-cinematic text-xs">
+  1587→  1587→                                  {MONTH_NAMES[reading.birthMonth - 1] || reading.birthMonth}
+  1588→  1588→                                </TableCell>
+  1589→  1589→                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">
+  1590→  1590→                                  {reading.emotionalPattern}
+  1591→  1591→                                </TableCell>
+  1592→  1592→                                <TableCell className="text-body-cinematic text-xs max-w-48 truncate">
+  1593→  1593→                                  {reading.relationshipFrustration}
+  1594→  1594→                                </TableCell>
+  1595→  1595→                                <TableCell className="text-[#c9a96e] text-xs max-w-36 truncate">
+  1596→  1596→                                  {reading.resultHint}
+  1597→  1597→                                </TableCell>
+  1598→  1598→                                <TableCell className="text-body-cinematic text-xs whitespace-nowrap">
+  1599→  1599→                                  {formatDate(reading.createdAt)}
+  1600→  1600→                                </TableCell>
+  1601→  1601→                              </motion.tr>
+  1602→  1602→                            ))}
+  1603→  1603→                          </TableBody>
+  1604→  1604→                        </Table>
+  1605→  1605→                      </div>
+  1606→  1606→
+  1607→  1607→                      {/* Tablet / Mobile Cards */}
+  1608→  1608→                      <div className="lg:hidden space-y-3 max-h-[70vh] overflow-y-auto">
+  1609→  1609→                        {microReadings.map((reading, i) => (
+  1610→  1610→                          <motion.div
+  1611→  1611→                            key={reading.id}
+  1612→  1612→                            initial={{ opacity: 0, y: 10 }}
+  1613→  1613→                            animate={{ opacity: 1, y: 0 }}
+  1614→  1614→                            transition={{ duration: 0.3, delay: i * 0.04 }}
+  1615→  1615→                            className="bg-[#111]/50 border border-white/[0.04] rounded-xl p-4 space-y-3"
+  1616→  1616→                          >
+  1617→  1617→                            <div className="flex items-start justify-between">
+  1618→  1618→                              <div className="min-w-0 flex-1">
+  1619→  1619→                                <p className="text-[#f0eee9] text-sm font-medium truncate">
+  1620→  1620→                                  {reading.email}
+  1621→  1621→                                </p>
+  1622→  1622→                                <p className="text-body-cinematic text-[10px] mt-0.5">
+  1623→  1623→                                  {formatDate(reading.createdAt)}
+  1624→  1624→                                </p>
+  1625→  1625→                              </div>
+  1626→  1626→                              <Badge
+  1627→  1627→                                variant="outline"
+  1628→  1628→                                className="text-[#c9a96e] border-[#c9a96e]/20 text-[10px] ml-2"
+  1629→  1629→                              >
+  1630→  1630→                                {MONTH_NAMES[reading.birthMonth - 1] || reading.birthMonth}
+  1631→  1631→                              </Badge>
+  1632→  1632→                            </div>
+  1633→  1633→                            <div className="space-y-2">
+  1634→  1634→                              <div>
+  1635→  1635→                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
+  1636→  1636→                                  Emotional Pattern
+  1637→  1637→                                </p>
+  1638→  1638→                                <p className="text-body-cinematic text-xs line-clamp-2">
+  1639→  1639→                                  {reading.emotionalPattern}
+  1640→  1640→                                </p>
+  1641→  1641→                              </div>
+  1642→  1642→                              <div>
+  1643→  1643→                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
+  1644→  1644→                                  Frustration
+  1645→  1645→                                </p>
+  1646→  1646→                                <p className="text-body-cinematic text-xs line-clamp-2">
+  1647→  1647→                                  {reading.relationshipFrustration}
+  1648→  1648→                                </p>
+  1649→  1649→                              </div>
+  1650→  1650→                              <div>
+  1651→  1651→                                <p className="text-[#555] text-[10px] uppercase tracking-wider mb-0.5">
+  1652→  1652→                                  Result Hint
+  1653→  1653→                                </p>
+  1654→  1654→                                <p className="text-[#c9a96e] text-xs line-clamp-2">
+  1655→  1655→                                  {reading.resultHint}
+  1656→  1656→                                </p>
+  1657→  1657→                              </div>
+  1658→  1658→                            </div>
+  1659→  1659→                          </motion.div>
+  1660→  1660→                        ))}
+  1661→  1661→                      </div>
+  1662→  1662→                    </>
+  1663→  1663→                  )}
+  1664→  1664→                </CardContent>
+  1665→  1665→              </Card>
+  1666→  1666→            </motion.div>
+  1667→  1667→          </TabsContent>
+  1668→  1668→
+  1669→  1669→          {/* ═══════════════════════════════════════════════════════
+  1670→  1670→              ROOMS TAB
+  1671→  1671→              ═══════════════════════════════════════════════════════ */}
+  1672→  1672→          <TabsContent value="rooms">
+  1673→  1673→            <AdminRoomsPanel />
+  1674→  1674→          </TabsContent>
+  1675→  1675→
+  1676→  1676→          {/* ═══════════════════════════════════════════════════════
+  1677→  1677→              EMAIL ANALYTICS TAB
+  1678→  1678→              ═══════════════════════════════════════════════════════ */}
+  1679→  1679→          <TabsContent value="email-analytics">
+  1680→  1680→            <EmailAnalyticsPanel />
+  1681→  1681→          </TabsContent>
+  1682→  1682→
+  1683→  1683→          {/* ═══════════════════════════════════════════════════════
+  1684→  1684→              FUNNEL TAB
+  1685→  1685→              ═══════════════════════════════════════════════════════ */}
+  1686→  1686→          <TabsContent value="funnel">
+  1687→  1687→            <FunnelDashboard />
+  1688→  1688→          </TabsContent>
+  1689→  1689→        </Tabs>
+  1690→  1690→      </main>
+  1691→  1691→
+  1692→  1692→      {/* ─── Footer ──────────────────────────────────────────────── */}
+  1693→  1693→      <footer className="border-t border-white/[0.04] mt-12">
+  1694→  1694→        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+  1695→  1695→          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+  1696→  1696→            <div className="flex items-center gap-2">
+  1697→  1697→              <Star className="size-3 text-[#c9a96e]" />
+  1698→  1698→              <p className="text-body-cinematic text-[10px]">
+  1699→  1699→                AstroKalki Admin Dashboard
+  1700→  1700→              </p>
+  1701→  1701→            </div>
+  1702→  1702→            <p className="text-[#333] text-[10px]">
+  1703→  1703→              Sacred pattern recognition platform
+  1704→  1704→            </p>
+  1705→  1705→          </div>
+  1706→  1706→        </div>
+  1707→  1707→      </footer>
+  1708→  1708→    </div>
+  1709→  1709→  );
+  1710→  1710→}
+  1711→  1711→
