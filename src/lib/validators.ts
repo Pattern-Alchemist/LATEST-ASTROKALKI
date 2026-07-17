@@ -10,17 +10,20 @@ export const slotsQuerySchema = z.object({
     .refine((val) => [30, 60, 90].includes(val), {
       message: 'Duration must be 30, 60, or 90 minutes',
     })
-    .optional(),
+    .optional()
+    .nullable(),
   startDate: z
     .string()
     .datetime()
     .describe('ISO 8601 datetime; defaults to now')
-    .optional(),
+    .optional()
+    .nullable(),
   endDate: z
     .string()
     .datetime()
     .describe('ISO 8601 datetime; defaults to now + 30 days')
-    .optional(),
+    .optional()
+    .nullable(),
   limit: z.coerce
     .number()
     .int()
@@ -28,7 +31,12 @@ export const slotsQuerySchema = z.object({
     .max(100)
     .optional()
     .default(50),
-});
+}).transform((data) => ({
+  ...data,
+  duration: data.duration ?? undefined,
+  startDate: data.startDate ?? undefined,
+  endDate: data.endDate ?? undefined,
+}));
 
 export type SlotsQuery = z.infer<typeof slotsQuerySchema>;
 
@@ -61,7 +69,7 @@ export const createBookingSchema = z.object({
   birthTime: z.string().optional().describe('HH:MM format'),
   birthPlace: z.string().optional(),
   contexts: z.string().optional().describe('JSON array of emotional context strings'),
-  message: z.string().optional().max(1000),
+  message: z.string().max(1000).optional(),
   referredBy: z.string().optional(),
 });
 
@@ -84,7 +92,7 @@ export const bookSlotSchema = z.object({
     .string()
     .optional()
     .refine((val) => !val || /^[+\d\s\-()]+$/.test(val)),
-  message: z.string().optional().max(1000),
+  message: z.string().max(1000).optional(),
 });
 
 export type BookSlotRequest = z.infer<typeof bookSlotSchema>;

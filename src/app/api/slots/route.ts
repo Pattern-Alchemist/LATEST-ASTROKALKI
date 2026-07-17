@@ -37,13 +37,17 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Validate and parse query parameters
-    const queryParams = {
-      duration: searchParams.get('duration'),
-      startDate: searchParams.get('startDate'),
-      endDate: searchParams.get('endDate'),
-      limit: searchParams.get('limit'),
-    };
+    // Validate and parse query parameters (filter out nulls to allow optional fields)
+    const queryParams: Record<string, string | undefined> = {};
+    const duration = searchParams.get('duration');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    const limit = searchParams.get('limit');
+
+    if (duration) queryParams.duration = duration;
+    if (startDate) queryParams.startDate = startDate;
+    if (endDate) queryParams.endDate = endDate;
+    if (limit) queryParams.limit = limit;
 
     const validationResult = validateRequest(slotsQuerySchema, queryParams);
     if (!validationResult.success) {
